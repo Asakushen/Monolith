@@ -1,11 +1,162 @@
 import { getBackendUrl } from "./_shared";
 
-// Cloudflare Pages Function — 爬虫预渲染中间件
-// 拦截社交平台/搜索引擎爬虫，注入文章专属 OG 标签
-// 普通用户请求不受影响，直接返回 SPA
+// Cloudflare Pages Function — 边缘 HTML 增强中间件
+//
+// 职责概览：
+// 1) [上游原有] 社交/搜索爬虫访问 /posts/:slug 时注入文章 OG meta
+// 2) [浅草物语本地魔改] 任意 UA 访问 /page/link 时，把友链绝对 URL 注入首包 HTML
+//    —— 解决 SPA 空壳导致友链自动检测脚本误判「未收录」
+//
+// 普通用户浏览器仍会加载 SPA；注入块仅保证「不执行 JS 的抓取」也能看到 <a href>。
+// 后端失败时一律 context.next() 回退纯 SPA，避免 500。
 
 const BOT_UA_REGEX =
   /bot|crawl|spider|facebookexternalhit|Facebot|Twitterbot|LinkedInBot|Slackbot|TelegramBot|WhatsApp|Discordbot|Embedly|Quora Link Preview|Showyoubot|outbrain|pinterest|vkShare|W3C_Validator|baiduspider|yandex|sogou|360Spider/i;
+
+// ========== BEGIN LOCAL MOD: friend-link SSR for /page/link (浅草物语) ==========
+// 合并 upstream 时：整块保留。upstream 若重写本文件，把本段 onRequest 分支与 helpers 再贴回去。
+// 依赖：GET {API_BASE}/api/pages/link 的 content 内含 <a href="https://...">（与后台独立页同源）。
+// 策略：对所有 UA 注入（友链检测器常用普通浏览器 UA，不能只认 bot）。
+const FRIEND_LINK_PAGE_SLUG = "link";
+const FRIEND_LINK_PATH = `/page/${FRIEND_LINK_PAGE_SLUG}`;
+
+/** 转义写入 HTML 属性/文本的字符串 */
+function escapeHtmlAttr(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/**
+ * 从独立页 Markdown/HTML content 中抽取绝对链接。
+ * 优先匹配 <a href="https://...">，并尽量取锚文本作 label。
+ */
+function extractAbsoluteLinks(content: string): { href: string; label: string }[] {
+  const seen = new Set<string>();
+  const out: { href: string; label: string }[] = [];
+
+  // <a href="https://..." ...>label</a>  （label 可能含嵌套标签，后面再剥）
+  const anchorRe = /<a\s+[^>]*href=["'](https?:\/\/[^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = anchorRe.exec(content)) !== null) {
+    const href = m[1].trim();
+    if (!href || seen.has(href)) continue;
+    // 跳过本站自链重复时可保留；检测脚本需要看到对方域名，自链无害
+    let label = m[2].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    if (!label) {
+      try {
+        label = new URL(href).hostname;
+      } catch {
+        label = href;
+      }
+    }
+    seen.add(href);
+    out.push({ href, label: label.slice(0, 120) });
+  }
+
+  // 兜底：content 里只有裸 URL、没有 <a> 时
+  if (out.length === 0) {
+    const bareRe = /https?:\/\/[^\s"'<>]+/gi;
+    let b: RegExpExecArray | null;
+    while ((b = bareRe.exec(content)) !== null) {
+      const href = b[0].replace(/[.,;)]+$/, "");
+      if (seen.has(href)) continue;
+      seen.add(href);
+      try {
+        out.push({ href, label: new URL(href).hostname });
+      } catch {
+        out.push({ href, label: href });
+      }
+    }
+  }
+
+  return out;
+}
+
+function buildFriendLinkPrerenderBlock(links: { href: string; label: string }[]): string {
+  const items = links
+    .map(
+      (l) =>
+        `    <li><a href="${escapeHtmlAttr(l.href)}" rel="noopener noreferrer">${escapeHtmlAttr(l.label)}</a></li>`
+    )
+    .join("\n");
+
+  // id 稳定，便于调试；visually-hidden 风格：对人眼几乎不可见，curl/检测器仍可读 DOM
+  // 不用 display:none：少数简陋脚本会跳过；用近零尺寸 + 裁剪更稳
+  return [
+    `<!-- LOCAL MOD: friend-link prerender for crawlers / mutual-link checkers; data from /api/pages/${FRIEND_LINK_PAGE_SLUG} -->`,
+    `<nav id="friend-links-prerender" aria-label="Friend links" style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0">`,
+    `  <ul>`,
+    items,
+    `  </ul>`,
+    `</nav>`,
+  ].join("\n");
+}
+
+async function tryInjectFriendLinks(
+  context: EventContext<Env, any, Record<string, unknown>>,
+  request: Request
+): Promise<Response | null> {
+  const backend = getBackendUrl(context.env);
+  if (!backend) return null;
+
+  try {
+    const apiRes = await fetch(`${backend}/api/pages/${FRIEND_LINK_PAGE_SLUG}`, {
+      headers: { "User-Agent": "Monolith-FriendLink-Prerender/1.0" },
+    });
+    if (!apiRes.ok) return null;
+
+    const page = (await apiRes.json()) as {
+      title?: string;
+      content?: string;
+      slug?: string;
+      error?: string;
+    };
+    if (page.error || !page.content) return null;
+
+    const links = extractAbsoluteLinks(page.content);
+    if (links.length === 0) return null;
+
+    const indexUrl = new URL("/", request.url);
+    const assetRes = await context.env.ASSETS.fetch(new Request(indexUrl.toString()));
+    if (!assetRes.ok) return null;
+    let html = await assetRes.text();
+
+    const block = buildFriendLinkPrerenderBlock(links);
+    const pageTitle = page.title || "友链";
+
+    // title / description 顺手改一下，方便人工 curl 确认命中的是友链页
+    html = html.replace(
+      /<title>[^<]*<\/title>/,
+      `<title>${escapeHtmlAttr(pageTitle)} | 浅草物语</title>`
+    );
+
+    // 插在 #root 前：SPA hydrate 后 UI 仍由 React 接管，注入块保留在 DOM 供无 JS 抓取
+    if (html.includes('<div id="root"')) {
+      html = html.replace('<div id="root"', `${block}\n    <div id="root"`);
+    } else if (html.includes("<body")) {
+      html = html.replace(/<body([^>]*)>/i, `<body$1>\n${block}\n`);
+    } else {
+      html = block + html;
+    }
+
+    return new Response(html, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        // 友链变更不频繁；短缓存减少打 Workers，改页后几分钟内生效
+        "Cache-Control": "public, max-age=120, s-maxage=300, stale-while-revalidate=600",
+        "X-Robots-Tag": "index, follow",
+        "X-Friend-Link-Prerender": String(links.length),
+      },
+    });
+  } catch {
+    return null;
+  }
+}
+// ========== END LOCAL MOD: friend-link SSR for /page/link ==========
 
 interface Env {
   API_BASE: string;
@@ -17,7 +168,16 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   const url = new URL(request.url);
   const pathname = url.pathname;
 
-  // 仅处理文章页路径 /posts/:slug
+  // ========== BEGIN LOCAL MOD: route /page/link (all UA) ==========
+  // 必须放在文章 bot 逻辑之前；失败则 null → 继续后面或 SPA
+  if (pathname === FRIEND_LINK_PATH || pathname === `${FRIEND_LINK_PATH}/`) {
+    const injected = await tryInjectFriendLinks(context, request);
+    if (injected) return injected;
+    return context.next();
+  }
+  // ========== END LOCAL MOD: route /page/link ==========
+
+  // 仅处理文章页路径 /posts/:slug （上游逻辑）
   const postMatch = pathname.match(/^\/posts\/([^/]+)$/);
   if (!postMatch) {
     return context.next();

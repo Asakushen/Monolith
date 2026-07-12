@@ -518,19 +518,19 @@ export function AboutPage() {
               },
               {
                 name: "紫罗兰永恒花园",
-                src: "https://bu.dusays.com/2023/05/24/646db43983d99.webp",
+                src: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx21827-ubzq619ZA2E9.png",
                 url: "https://www.bilibili.com/bangumi/media/md8892/",
                 desc: "极致作画与细腻的爱",
               },
               {
                 name: "可塑性记忆",
-                src: "https://jsd.cdn.zzko.cn/gh/Asakushen/pic/2023/12/28/13bd0b.png",
+                src: "https://cdn.jsdelivr.net/gh/Asakushen/pic@main/2023/12/28/13bd0b.png",
                 url: "https://www.bilibili.com/bangumi/play/ss1552",
                 desc: "关于时光与告别的浪漫",
               },
               {
                 name: "孤独摇滚！",
-                src: "https://jsd.cdn.zzko.cn/gh/Asakushen/pic/2023/12/28/69733d.png",
+                src: "https://cdn.jsdelivr.net/gh/Asakushen/pic@main/2023/12/28/69733d.png",
                 url: "https://www.bilibili.com/bangumi/play/ss43164",
                 desc: "社恐人的摇滚乌托邦",
               },

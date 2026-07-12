@@ -2550,24 +2550,38 @@
 }
 
 
-/* LOCAL MOD: INTP-A badge aurora gradient (matches about fluid palette) */
+/* LOCAL MOD: INTP-A badge — soft glass chip (quiet, matches Bento tags) */
 .about-intp-badge {
-  color: #f8fafc;
-  letter-spacing: 0.04em;
-  border: 1px solid color-mix(in oklch, #a78bfa 45%, transparent);
+  color: color-mix(in oklch, #c4b5fd 72%, white);
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  border: 1px solid color-mix(in oklch, #a78bfa 22%, transparent);
   background:
-    linear-gradient(135deg,
-      color-mix(in oklch, #6366f1 88%, #0f172a) 0%,
-      color-mix(in oklch, #8b5cf6 82%, #1e1b4b) 42%,
-      color-mix(in oklch, #06b6d4 78%, #0e7490) 100%);
+    linear-gradient(
+      145deg,
+      color-mix(in oklch, #1e1b4b 35%, transparent) 0%,
+      color-mix(in oklch, #312e81 18%, transparent) 55%,
+      color-mix(in oklch, #0f766e 12%, transparent) 100%
+    ),
+    color-mix(in oklch, var(--card) 72%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   box-shadow:
-    0 8px 20px -10px color-mix(in oklch, #8b5cf6 70%, transparent),
-    0 0 0 1px color-mix(in oklch, #22d3ee 18%, transparent),
-    inset 0 1px 0 color-mix(in oklch, white 22%, transparent);
-  text-shadow: 0 1px 8px color-mix(in oklch, #a78bfa 55%, transparent);
+    0 6px 16px -12px color-mix(in oklch, black 55%, transparent),
+    inset 0 1px 0 color-mix(in oklch, white 8%, transparent);
+  text-shadow: none;
 }
 .about-intp-badge:hover {
-  filter: brightness(1.08) saturate(1.08);
+  border-color: color-mix(in oklch, #a78bfa 34%, transparent);
+  color: color-mix(in oklch, #ddd6fe 85%, white);
+  background:
+    linear-gradient(
+      145deg,
+      color-mix(in oklch, #312e81 28%, transparent) 0%,
+      color-mix(in oklch, #1e1b4b 16%, transparent) 55%,
+      color-mix(in oklch, #0f766e 14%, transparent) 100%
+    ),
+    color-mix(in oklch, var(--card) 78%, transparent);
 }
 
 /* ========== END LOCAL MOD: about-page cinematic polish ========== */

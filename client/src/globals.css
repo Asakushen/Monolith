@@ -2548,4 +2548,26 @@
     background-clip: unset;
   }
 }
+
+
+/* LOCAL MOD: INTP-A badge aurora gradient (matches about fluid palette) */
+.about-intp-badge {
+  color: #f8fafc;
+  letter-spacing: 0.04em;
+  border: 1px solid color-mix(in oklch, #a78bfa 45%, transparent);
+  background:
+    linear-gradient(135deg,
+      color-mix(in oklch, #6366f1 88%, #0f172a) 0%,
+      color-mix(in oklch, #8b5cf6 82%, #1e1b4b) 42%,
+      color-mix(in oklch, #06b6d4 78%, #0e7490) 100%);
+  box-shadow:
+    0 8px 20px -10px color-mix(in oklch, #8b5cf6 70%, transparent),
+    0 0 0 1px color-mix(in oklch, #22d3ee 18%, transparent),
+    inset 0 1px 0 color-mix(in oklch, white 22%, transparent);
+  text-shadow: 0 1px 8px color-mix(in oklch, #a78bfa 55%, transparent);
+}
+.about-intp-badge:hover {
+  filter: brightness(1.08) saturate(1.08);
+}
+
 /* ========== END LOCAL MOD: about-page cinematic polish ========== */

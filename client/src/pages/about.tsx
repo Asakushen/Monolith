@@ -340,7 +340,7 @@ export function AboutPage() {
               className="relative w-32 h-32 md:w-36 md:h-36 rounded-2xl border-2 border-border/80 shadow-2xl object-cover transform group-hover:scale-105 transition-transform duration-500"
               alt="avatar"
             />
-            <div className="absolute -bottom-2 -right-2 bg-primary text-primary-foreground text-[10px] font-bold px-2 py-1 rounded-md shadow-lg about-badge-float">
+            <div className="absolute -bottom-2 -right-2 text-[10px] font-bold px-2.5 py-1 rounded-md shadow-lg about-badge-float about-intp-badge">
               INTP-A
             </div>
           </div>

@@ -2429,3 +2429,123 @@
   html[data-reading-theme="light"] .prose-monolith strong {
     color: #000000 !important;
   }
+
+
+/* ========== BEGIN LOCAL MOD: about-page cinematic polish (浅草物语 2026-07-12) ==========
+ * 仅服务 /about：流体光斑、徽章呼吸、标题微光、鼠标追光卡。
+ * merge upstream 时整块保留。prefers-reduced-motion 见 about.tsx 运行时开关。
+ * ========== */
+@keyframes about-fluid-spin {
+  0% { transform: rotate(0deg) scale(1); }
+  50% { transform: rotate(180deg) scale(1.08); }
+  100% { transform: rotate(360deg) scale(1); }
+}
+@keyframes about-fluid-spin-rev {
+  0% { transform: rotate(0deg) scale(1.05); }
+  50% { transform: rotate(-180deg) scale(0.95); }
+  100% { transform: rotate(-360deg) scale(1.05); }
+}
+@keyframes about-orb-drift {
+  0% { transform: translate(0, 0) scale(1); }
+  100% { transform: translate(-24px, 18px) scale(1.12); }
+}
+@keyframes about-badge-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+@keyframes about-badge-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklch, #34d399 35%, transparent); }
+  50% { box-shadow: 0 0 0 6px transparent; }
+}
+@keyframes about-title-shimmer {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+.about-fluid-blob {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(48px);
+  opacity: 0.55;
+  will-change: transform;
+  mix-blend-mode: screen;
+}
+.about-fluid-blob-a {
+  width: 280px;
+  height: 280px;
+  top: -20%;
+  right: -5%;
+  background: conic-gradient(from 90deg, #3b82f6, #22d3ee, #a78bfa, #3b82f6);
+  animation: about-fluid-spin 18s linear infinite;
+}
+.about-fluid-blob-b {
+  width: 240px;
+  height: 240px;
+  bottom: -25%;
+  left: -8%;
+  background: conic-gradient(from 200deg, #10b981, #6366f1, #06b6d4, #10b981);
+  animation: about-fluid-spin-rev 22s linear infinite;
+  opacity: 0.4;
+}
+.about-fluid-blob-c {
+  width: 180px;
+  height: 180px;
+  top: 35%;
+  left: 40%;
+  background: radial-gradient(circle, rgba(167, 139, 250, 0.7), transparent 70%);
+  animation: about-orb-drift 12s ease-in-out infinite alternate;
+  opacity: 0.45;
+}
+
+.about-hero-shell {
+  isolation: isolate;
+}
+.about-badge-float {
+  animation: about-badge-float 3.2s ease-in-out infinite;
+}
+.about-badge-pulse {
+  animation: about-badge-pulse 2.2s ease-in-out infinite;
+}
+.about-title-shimmer {
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklch, var(--foreground) 92%, transparent) 0%,
+    color-mix(in oklch, var(--foreground) 92%, #93c5fd 40%) 40%,
+    color-mix(in oklch, var(--foreground) 92%, #6ee7b7 70%),
+    color-mix(in oklch, var(--foreground) 92%, transparent) 100%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: about-title-shimmer 8s linear infinite;
+}
+.about-glow-card {
+  --glow-x: 50%;
+  --glow-y: 50%;
+  --tilt-x: 0deg;
+  --tilt-y: 0deg;
+  will-change: transform;
+}
+.about-anime-card:hover {
+  box-shadow: 0 16px 40px -20px color-mix(in oklch, var(--foreground) 35%, transparent);
+}
+.about-quote {
+  text-wrap: balance;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .about-fluid-blob,
+  .about-badge-float,
+  .about-badge-pulse,
+  .about-title-shimmer {
+    animation: none !important;
+  }
+  .about-title-shimmer {
+    color: var(--foreground);
+    background: none;
+    -webkit-background-clip: unset;
+    background-clip: unset;
+  }
+}
+/* ========== END LOCAL MOD: about-page cinematic polish ========== */

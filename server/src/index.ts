@@ -605,7 +605,12 @@ app.get("/rss.xml", async (c) => {
   const settings = await db.getSettings();
   const siteTitle = settings.site_title || "Monolith";
   const siteDesc = settings.site_description || "";
-  const siteUrl = new URL(c.req.url).origin;
+  // LOCAL MOD (shallow): prefer public origin for custom domain + Pages proxy.
+  // Upstream uses request origin only, which becomes workers.dev when /rss.xml is
+  // reverse-proxied from Pages Functions. Keep in sync with sitemap/robots.
+  // BEGIN LOCAL MOD: RSS siteUrl via SITE_ORIGIN
+  const siteUrl = c.env.SITE_ORIGIN || new URL(c.req.url).origin;
+  // END LOCAL MOD
 
   // 获取最新 20 篇文章
   const allPosts = await db.getRecentPublishedPosts(20);
@@ -677,13 +682,17 @@ app.get("/sitemap.xml", async (c) => {
   }
 
   // 独立页面
+  // LOCAL MOD (shallow): frontend route is /page/:slug (see client/src/app.tsx),
+  // not /pages/:slug. Upstream sitemap wrote plural path → 404 for page URLs.
+  // BEGIN LOCAL MOD: sitemap page path singular
   for (const page of allPages) {
     urls.push(`  <url>
-    <loc>${escXml(siteUrl)}/pages/${escXml(page.slug)}</loc>
+    <loc>${escXml(siteUrl)}/page/${escXml(page.slug)}</loc>
     <changefreq>monthly</changefreq>
     <priority>0.5</priority>
   </url>`);
   }
+  // END LOCAL MOD
 
   const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">

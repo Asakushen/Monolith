@@ -12,8 +12,9 @@ export function LegacyHero() {
             <span className="hidden font-mono text-[11px] text-muted-foreground/45 sm:inline">EDGE / DESIGN / CODE</span>
           </div>
 
+          {/* LOCAL MOD: default brand */}
           <h1 className="max-w-[760px] animate-blur-in delay-1 font-heading text-[40px] font-semibold leading-[0.95] tracking-[-0.045em] text-foreground sm:text-[56px] lg:text-[72px]">
-            Monolith
+            浅草物语
           </h1>
           <p className="mt-[18px] hidden w-full max-w-[620px] whitespace-normal break-words [word-break:break-all] animate-fade-in-up delay-2 text-[17px] leading-[1.8] text-muted-foreground sm:block">
             书写代码、设计系统与边缘计算的个人技术档案。以更清晰的网格组织阅读路径，让文章、标签和长期主题更容易被发现。
@@ -73,7 +74,7 @@ const DEFAULT_TOPICS: HeroTopic[] = [
 ];
 
 export function Hero({
-  title = "Monolith",
+  title = "浅草物语", // LOCAL MOD: default brand
   kicker = "EDGE JOURNAL / CODE ARCHIVE",
   subtitle = "技术写作、系统设计与边缘实践的索引页",
   description = "用更冷静的网格整理长期主题：前端架构、设计系统、边缘计算与工程排障。每一篇文章都尽量给出可复用的上下文，而不是只留下零散记录。",

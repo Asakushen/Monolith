@@ -19,7 +19,7 @@ type SeoProps = {
   noindex?: boolean;
 };
 
-const DEFAULT_SITE_NAME = "Monolith";
+const DEFAULT_SITE_NAME = "浅草物语"; // LOCAL MOD: default brand
 const DEFAULT_DESCRIPTION = "书写代码、设计与边缘计算的个人博客。";
 
 /**

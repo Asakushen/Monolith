@@ -327,11 +327,11 @@ export function HomePage() {
   const sortedTags = Array.from(tagCounts.entries()).sort((a, b) => b[1] - a[1]);
   const maxTagCount = sortedTags.length > 0 ? sortedTags[0][1] : 1;
 
-  const authorName = settings?.author_name || "Monolith";
+  const authorName = settings?.author_name || "浅草丶纳凉"; // LOCAL MOD: default brand
   const authorTitle = settings?.author_title || "独立开发者";
   const authorBio = settings?.author_bio || "热衷于前端架构、设计系统与边缘计算。相信技术应当服务于人，而非反过来。";
   const authorAvatar = settings?.author_avatar || "";
-  const siteTitle = settings?.site_title || "Monolith";
+  const siteTitle = settings?.site_title || "浅草物语"; // LOCAL MOD: default brand
   const siteDescription = settings?.site_description || "书写代码、设计与边缘计算的个人博客。";
   const heroDescription = settings?.hero_description || settings?.site_description || undefined;
   const heroActions = parseHeroActions(settings?.hero_actions);

@@ -20,7 +20,7 @@ export function Navbar() {
   const [open, setOpen] = useState(false);
   const [gateOpen, setGateOpen] = useState(false);
   const [navPages, setNavPages] = useState<NavPage[]>([]);
-  const [brand, setBrand] = useState({ title: "Monolith", icon: "" });
+  const [brand, setBrand] = useState({ title: "浅草物语", icon: "" }); // LOCAL MOD: default brand
 
   useEffect(() => {
     fetchNavPages().then(setNavPages);
@@ -28,7 +28,7 @@ export function Navbar() {
       .then((r) => r.json())
       .then((settings: { site_title?: string; site_icon?: string }) => {
         setBrand({
-          title: settings.site_title?.trim() || "Monolith",
+          title: settings.site_title?.trim() || "浅草物语", // LOCAL MOD: default brand
           icon: settings.site_icon?.trim() || "",
         });
       })

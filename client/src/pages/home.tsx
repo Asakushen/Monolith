@@ -333,13 +333,17 @@ export function HomePage() {
   const authorAvatar = settings?.author_avatar || "";
   const siteTitle = settings?.site_title || "浅草物语"; // LOCAL MOD: default brand
   const siteDescription = settings?.site_description || "书写代码、设计与边缘计算的个人博客。";
-  const heroDescription = settings?.hero_description || settings?.site_description || undefined;
   const heroActions = parseHeroActions(settings?.hero_actions);
   const heroTopics = parseHeroTopics(settings?.hero_topics);
 
   // 社交链接（优先读取新版可扩展列表，旧字段作为兼容回退）
   const socialLinks = getPublicSocialLinks(settings);
-  const latestPost = posts[0];
+
+  // Prefer short public tagline over long landing-page description
+  const heroSubtitle =
+    settings?.hero_subtitle?.trim() ||
+    settings?.site_tagline?.trim() ||
+    "技术写作 · 系统设计 · 边缘实践";
 
   return (
     <div className="flex flex-col">
@@ -349,61 +353,28 @@ export function HomePage() {
         image={settings?.site_og_image || undefined}
         url="/"
       />
+      {/* LOCAL MOD (home-first): compact hero — posts must enter the first viewport */}
       <Hero
         title={siteTitle}
-        kicker={settings?.hero_kicker || undefined}
-        subtitle={settings?.hero_subtitle || settings?.site_tagline || undefined}
-        description={heroDescription}
+        kicker={undefined}
+        subtitle={heroSubtitle}
+        description={undefined}
         actions={heroActions}
         topics={heroTopics}
       />
-      <div className="grid grid-cols-1 gap-[12px] border-b border-border/18 py-[18px] sm:grid-cols-3">
-        {[
-          { label: "文章", value: loading ? "..." : posts.length.toString(), detail: "可读内容" },
-          { label: "标签", value: loading ? "..." : sortedTags.length.toString(), detail: "主题索引" },
-          { label: "浏览", value: traffic?.totalViews?.toLocaleString() ?? "...", detail: "累计访问" },
-        ].map((item) => (
-          <div key={item.label} className="rounded-md border border-border/16 bg-background/24 px-[16px] py-[14px] transition-colors hover:border-border/32 hover:bg-card/[0.10]">
-            <p className="font-mono text-[11px] text-muted-foreground/42">{item.label}</p>
-            <div className="mt-[8px] flex items-end justify-between gap-[12px]">
-              <span className="font-heading text-[28px] font-semibold leading-none tracking-[-0.03em] text-foreground/90">{item.value}</span>
-              <span className="text-[12px] text-muted-foreground/45">{item.detail}</span>
-            </div>
-          </div>
-        ))}
-      </div>
-      {latestPost && (
-        <AnimateIn>
-          <Link
-            href={`/posts/${latestPost.slug}`}
-            className="group mt-[28px] grid rounded-md border border-border/20 bg-card/[0.12] p-[18px] transition-all duration-300 hover:-translate-y-[2px] hover:border-border/45 hover:bg-card/[0.18] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring md:grid-cols-[112px_minmax(0,1fr)_auto] md:items-center md:gap-[22px]"
-          >
-            <div className="flex items-center gap-[8px] font-mono text-[11px] text-muted-foreground/46">
-              <span className="h-[6px] w-[6px] rounded-full bg-foreground/42" />
-              Latest
-            </div>
-            <div className="min-w-0">
-              <h2 className="mt-[6px] font-heading text-[22px] font-semibold leading-tight tracking-[-0.02em] text-foreground md:mt-0 md:text-[26px]">
-                {latestPost.title}
-              </h2>
-              <p className="mt-[8px] line-clamp-2 text-[14px] leading-[1.7] text-muted-foreground/72">{latestPost.excerpt}</p>
-            </div>
-            <span className="mt-[14px] inline-flex min-h-[36px] items-center gap-[6px] text-[13px] text-muted-foreground/55 transition-colors group-hover:text-foreground md:mt-0">
-              继续阅读 <ExternalLink className="h-[14px] w-[14px]" />
-            </span>
-          </Link>
-        </AnimateIn>
-      )}
-      <div className="grid grid-cols-1 gap-[32px] py-[36px] lg:grid-cols-[minmax(0,1fr)_280px] lg:gap-[44px]">
+      <div className="grid grid-cols-1 gap-[28px] pt-[22px] pb-[36px] lg:grid-cols-[minmax(0,1fr)_280px] lg:gap-[40px] lg:pt-[26px]">
         <section>
           <AnimateIn>
-            <div id="latest-posts" className="mb-[24px] flex flex-col gap-[8px] border-l border-border/50 pl-[14px] sm:flex-row sm:items-end sm:justify-between">
+            <div id="latest-posts" className="mb-[18px] flex flex-col gap-[6px] border-l border-border/40 pl-[14px] sm:flex-row sm:items-end sm:justify-between scroll-mt-[80px]">
               <div>
-                <p className="text-[12px] font-medium uppercase tracking-[0.08em] text-muted-foreground/60">Latest Posts</p>
-                <h2 className="mt-[4px] text-[24px] font-semibold tracking-[-0.02em] text-foreground">最新文章</h2>
+                <p className="text-[11px] font-medium uppercase tracking-[0.1em] text-muted-foreground/48">Latest</p>
+                <h2 className="mt-[3px] text-[22px] font-semibold tracking-[-0.02em] text-foreground sm:text-[24px]">最新文章</h2>
               </div>
               {!loading && (
-                <span className="text-[13px] text-muted-foreground/60">{posts.length} 篇可读内容</span>
+                <span className="font-mono text-[12px] text-muted-foreground/48">
+                  {posts.length} 篇
+                  {traffic?.totalViews != null ? ` · ${traffic.totalViews.toLocaleString()} 浏览` : ""}
+                </span>
               )}
             </div>
           </AnimateIn>
@@ -434,7 +405,7 @@ export function HomePage() {
         </section>
 
         <aside id="content-index" className="block scroll-mt-[80px]">
-          <div className="grid gap-[16px] sm:grid-cols-2 lg:sticky lg:top-[72px] lg:mt-[58px] lg:flex lg:flex-col lg:gap-[18px]">
+          <div className="grid gap-[16px] sm:grid-cols-2 lg:sticky lg:top-[72px] lg:mt-[46px] lg:flex lg:flex-col lg:gap-[16px]">
             {/* ── 博主名片 ── */}
             <AnimateIn animation="animate-fade-in" delay="delay-2">
               <div className="rounded-md border border-border/25 bg-background/25 p-[18px]">
@@ -515,6 +486,29 @@ export function HomePage() {
                     <span className="text-[12px] text-muted-foreground/20">暂无访问数据</span>
                   </div>
                 )}
+              </div>
+            </AnimateIn>
+
+            
+            {/* ── 站务快览（后置，不占首屏） ── */}
+            <AnimateIn animation="animate-fade-in" delay="delay-4">
+              <div className="rounded-md border border-border/22 bg-background/22 px-[16px] py-[14px]">
+                <div className="mb-[10px] flex items-center justify-between">
+                  <h3 className="text-[13px] font-medium tracking-normal text-muted-foreground/58">站务快览</h3>
+                  <span className="font-mono text-[10px] text-muted-foreground/28">live</span>
+                </div>
+                <div className="grid grid-cols-3 gap-[8px]">
+                  {[
+                    { label: "文章", value: loading ? "…" : String(posts.length) },
+                    { label: "标签", value: loading ? "…" : String(sortedTags.length) },
+                    { label: "浏览", value: traffic?.totalViews != null ? traffic.totalViews.toLocaleString() : "…" },
+                  ].map((item) => (
+                    <div key={item.label} className="rounded-[6px] border border-border/12 bg-card/[0.08] px-[8px] py-[10px] text-center">
+                      <p className="font-heading text-[18px] font-semibold leading-none tracking-[-0.03em] text-foreground/88">{item.value}</p>
+                      <p className="mt-[6px] font-mono text-[10px] text-muted-foreground/42">{item.label}</p>
+                    </div>
+                  ))}
+                </div>
               </div>
             </AnimateIn>
 

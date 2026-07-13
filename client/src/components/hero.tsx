@@ -1,42 +1,18 @@
 export function LegacyHero() {
   return (
-    <section className="relative border-b border-border/20 py-[44px] sm:py-[56px] lg:py-[68px]">
-      <div className="pointer-events-none absolute inset-0 hero-grid opacity-45" />
-      <div className="relative grid gap-[28px] lg:grid-cols-[minmax(0,1fr)_280px] lg:items-end">
-        <div className="min-w-0">
-          <div className="mb-[20px] flex items-center gap-[12px] animate-fade-in">
-            <div className="relative flex h-[56px] w-[28px] shrink-0 items-center justify-center rounded-[4px] border border-border/25 bg-foreground/[0.06]">
-              <div className="h-[42px] w-[16px] rounded-[3px] bg-gradient-to-b from-foreground/88 to-foreground/38 shadow-[0_18px_44px_oklch(0_0_0_/_18%)]" />
-            </div>
-            <div className="h-px flex-1 bg-border/25" />
-            <span className="hidden font-mono text-[11px] text-muted-foreground/45 sm:inline">EDGE / DESIGN / CODE</span>
-          </div>
-
-          {/* LOCAL MOD: default brand */}
-          <h1 className="max-w-[760px] animate-blur-in delay-1 font-heading text-[40px] font-semibold leading-[0.95] tracking-[-0.045em] text-foreground sm:text-[56px] lg:text-[72px]">
-            浅草物语
-          </h1>
-          <p className="mt-[18px] hidden w-full max-w-[620px] whitespace-normal break-words [word-break:break-all] animate-fade-in-up delay-2 text-[17px] leading-[1.8] text-muted-foreground sm:block">
-            书写代码、设计系统与边缘计算的个人技术档案。以更清晰的网格组织阅读路径，让文章、标签和长期主题更容易被发现。
-          </p>
-          <p className="mt-[18px] animate-fade-in-up delay-2 text-[16px] leading-[1.75] text-muted-foreground sm:hidden">
-            <span className="block">书写代码、设计系统与边缘计算。</span>
-            <span className="block">以清晰网格组织阅读路径。</span>
-            <span className="block">让文章、标签和长期主题更容易被发现。</span>
-          </p>
-        </div>
-
-        <div className="animate-fade-in-up delay-3 rounded-md border border-border/20 bg-background/45 p-[16px] backdrop-blur-sm">
-          <p className="font-mono text-[11px] text-muted-foreground/40">CURRENT FOCUS</p>
-          <div className="mt-[14px] space-y-[10px]">
-            {["工程笔记", "设计观察", "边缘计算"].map((item) => (
-              <div key={item} className="flex min-h-[32px] items-center justify-between border-b border-border/12 last:border-b-0">
-                <span className="text-[13px] text-foreground/82">{item}</span>
-                <span className="h-[6px] w-[6px] rounded-full bg-foreground/38" />
-              </div>
-            ))}
-          </div>
-        </div>
+    <section className="relative border-b border-border/18 py-[28px] sm:py-[32px]">
+      <div className="pointer-events-none absolute inset-0 hero-grid opacity-30" />
+      <div className="relative min-w-0">
+        <p className="font-mono text-[11px] tracking-[0.08em] text-muted-foreground/42">
+          EDGE / DESIGN / CODE
+        </p>
+        {/* LOCAL MOD: default brand */}
+        <h1 className="mt-[10px] max-w-[760px] font-heading text-[34px] font-semibold leading-[0.98] tracking-[-0.04em] text-foreground sm:text-[44px] lg:text-[52px]">
+          浅草物语
+        </h1>
+        <p className="mt-[12px] max-w-[560px] text-[14px] leading-[1.7] text-muted-foreground/78 sm:text-[15px]">
+          书写代码、设计系统与边缘计算的个人技术档案。
+        </p>
       </div>
     </section>
   );
@@ -73,61 +49,63 @@ const DEFAULT_TOPICS: HeroTopic[] = [
   { title: "边缘部署", desc: "Workers / D1 / R2 的真实工程路径" },
 ];
 
+/**
+ * LOCAL MOD (home-first): compact brand strip.
+ * Keeps identity without a product-landing wall that pushes posts below the fold.
+ * Topics prop retained for API compatibility but no longer rendered on home.
+ */
 export function Hero({
   title = "浅草物语", // LOCAL MOD: default brand
-  kicker = "EDGE JOURNAL / CODE ARCHIVE",
-  subtitle = "技术写作、系统设计与边缘实践的索引页",
-  description = "用更冷静的网格整理长期主题：前端架构、设计系统、边缘计算与工程排障。每一篇文章都尽量给出可复用的上下文，而不是只留下零散记录。",
+  kicker,
+  subtitle = "技术写作 · 系统设计 · 边缘实践",
+  description,
   actions = DEFAULT_ACTIONS,
-  topics = DEFAULT_TOPICS,
+  topics: _topics = DEFAULT_TOPICS,
 }: HeroProps) {
-  const visibleActions = actions.filter((item) => item.label.trim() && item.href.trim()).slice(0, 3);
-  const visibleTopics = topics.filter((item) => item.title.trim() && item.desc.trim()).slice(0, 3);
+  void _topics;
+  const visibleActions = actions
+    .filter((item) => item.label.trim() && item.href.trim())
+    .slice(0, 3);
+
+  // Prefer a short line: subtitle first; only use description if short enough
+  const tagline =
+    (subtitle && subtitle.trim()) ||
+    (description && description.trim().length <= 48 ? description.trim() : "") ||
+    "技术写作 · 系统设计 · 边缘实践";
+
+  const showKicker = Boolean(kicker?.trim()) && kicker!.trim().length <= 42;
 
   return (
-    <section className="relative border-b border-border/18 py-[40px] sm:py-[52px] lg:py-[64px]">
-      <div className="pointer-events-none absolute inset-0 hero-grid opacity-35" />
-      <div className="relative grid gap-[24px] lg:grid-cols-[minmax(0,1fr)_320px] lg:items-stretch">
-        <div className="min-w-0 border-l border-border/35 pl-[16px] sm:pl-[20px]">
-          <div className="mb-[20px] flex items-center gap-[12px]">
-            <div className="min-w-0">
-              <p className="font-mono text-[11px] text-muted-foreground/45">{kicker}</p>
-              <p className="mt-[4px] text-[12px] text-muted-foreground/42">{subtitle}</p>
-            </div>
-          </div>
-
-          <h1 className="max-w-[820px] font-heading text-[42px] font-semibold leading-[0.96] tracking-[-0.045em] text-foreground sm:text-[60px] lg:text-[76px]">
+    <section className="relative border-b border-border/16 py-[22px] sm:py-[28px] lg:py-[32px]">
+      <div className="pointer-events-none absolute inset-0 hero-grid opacity-28" />
+      <div className="relative flex flex-col gap-[16px] sm:flex-row sm:items-end sm:justify-between sm:gap-[24px]">
+        <div className="min-w-0 border-l border-foreground/12 pl-[14px] sm:pl-[16px]">
+          {showKicker && (
+            <p className="mb-[8px] font-mono text-[10px] tracking-[0.12em] text-muted-foreground/40 uppercase">
+              {kicker}
+            </p>
+          )}
+          <h1 className="font-heading text-[32px] font-semibold leading-[0.98] tracking-[-0.04em] text-foreground sm:text-[40px] lg:text-[48px]">
             {title}
           </h1>
-          <p className="mt-[20px] max-w-[660px] text-[16px] leading-[1.85] text-muted-foreground sm:text-[17px]">
-            {description}
+          <p className="mt-[10px] max-w-[520px] text-[13.5px] leading-[1.65] text-muted-foreground/75 sm:text-[14.5px]">
+            {tagline}
           </p>
+        </div>
 
-          <div className="mt-[24px] flex flex-wrap gap-[8px]">
+        {visibleActions.length > 0 && (
+          <div className="flex shrink-0 flex-wrap gap-[6px] sm:justify-end sm:pb-[2px]">
             {visibleActions.map((item) => (
               <a
                 key={`${item.label}-${item.href}`}
                 href={item.href}
-                className="inline-flex min-h-[44px] items-center rounded-md border border-border/18 bg-background/32 px-[12px] text-[13px] text-muted-foreground/72 transition-all duration-200 hover:-translate-y-[2px] hover:border-border/36 hover:bg-card/22 hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:min-h-[36px]"
+                className="inline-flex min-h-[36px] items-center rounded-md border border-border/16 bg-background/28 px-[11px] text-[12.5px] text-muted-foreground/70 transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] hover:-translate-y-[1px] hover:border-border/34 hover:bg-card/20 hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:min-h-[32px]"
               >
                 {item.label}
               </a>
             ))}
           </div>
-        </div>
-
-        <div className="grid gap-[10px] rounded-md border border-border/20 bg-background/35 p-[14px] backdrop-blur-sm">
-          <p className="font-mono text-[11px] text-muted-foreground/42">CURRENT THREADS</p>
-          {visibleTopics.map((item) => (
-            <div key={item.title} className="rounded-md border border-border/14 bg-card/[0.10] px-[12px] py-[10px]">
-              <div className="flex items-center justify-between gap-[12px]">
-                <span className="text-[13px] font-medium text-foreground/86">{item.title}</span>
-                <span className="h-[6px] w-[6px] rounded-full bg-foreground/42" />
-              </div>
-              <p className="mt-[6px] text-[12px] leading-[1.6] text-muted-foreground/55">{item.desc}</p>
-            </div>
-          ))}
-        </div>
+        )}
       </div>
     </section>
   );

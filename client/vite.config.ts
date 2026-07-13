@@ -10,16 +10,18 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: "autoUpdate",
-      includeAssets: ["favicon.png", "icon-192.png", "icon-512.png"],
+      // LOCAL MOD: public brand for PWA install name/icons
+      includeAssets: ["favicon.png", "apple-touch-icon.png", "icon-192.png", "icon-512.png", "og-default.png"],
       manifest: {
-        name: "Monolith",
-        short_name: "Monolith",
-        description: "一个基于边缘计算的极简博客系统",
-        theme_color: "#0a0a0a",
-        background_color: "#0a0a0a",
+        name: "浅草物语",
+        short_name: "浅草物语",
+        description: "书写代码、设计与边缘计算的个人博客。",
+        lang: "zh-CN",
+        theme_color: "#0a0a0f",
+        background_color: "#0a0a0f",
         icons: [
           {
-            src: "icon-192.png", // 这里假定我们会有这样的图标或者暂时只依赖浏览器回退
+            src: "icon-192.png",
             sizes: "192x192",
             type: "image/png"
           },

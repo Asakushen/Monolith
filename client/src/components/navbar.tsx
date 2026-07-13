@@ -20,17 +20,45 @@ export function Navbar() {
   const [open, setOpen] = useState(false);
   const [gateOpen, setGateOpen] = useState(false);
   const [navPages, setNavPages] = useState<NavPage[]>([]);
-  const [brand, setBrand] = useState({ title: "浅草物语", icon: "" }); // LOCAL MOD: default brand
+  // LOCAL MOD: hydrate brand from localStorage cache to avoid first-paint Monolith/empty icon flash
+  const [brand, setBrand] = useState(() => {
+    try {
+      const raw = localStorage.getItem("monolith_public_brand");
+      if (raw) {
+        const parsed = JSON.parse(raw) as { title?: string; icon?: string };
+        const title = typeof parsed.title === "string" ? parsed.title.trim() : "";
+        const icon = typeof parsed.icon === "string" ? parsed.icon.trim() : "";
+        if (title || icon) {
+          return {
+            title: title || "浅草物语",
+            icon: icon || "/favicon.png",
+          };
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return { title: "浅草物语", icon: "/favicon.png" }; // LOCAL MOD: static favicon fallback
+  });
 
   useEffect(() => {
     fetchNavPages().then(setNavPages);
     fetch("/api/settings/public")
       .then((r) => r.json())
       .then((settings: { site_title?: string; site_icon?: string }) => {
-        setBrand({
+        const next = {
           title: settings.site_title?.trim() || "浅草物语", // LOCAL MOD: default brand
-          icon: settings.site_icon?.trim() || "",
-        });
+          icon: settings.site_icon?.trim() || "/favicon.png",
+        };
+        setBrand(next);
+        try {
+          localStorage.setItem(
+            "monolith_public_brand",
+            JSON.stringify({ ...next, updatedAt: Date.now() }),
+          );
+        } catch {
+          // ignore
+        }
       })
       .catch(() => {});
   }, []);

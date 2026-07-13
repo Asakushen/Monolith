@@ -19,7 +19,7 @@ export function Footer() {
     fetchNavPages().then(setNavPages);
   }, []);
 
-  const displayText = footerText || `© ${currentYear} Monolith. 使用 Hono + Vite 构建，部署于 Cloudflare 边缘。`;
+  const displayText = footerText || `© ${currentYear} 浅草物语. 使用 Hono + Vite 构建，部署于 Cloudflare 边缘。`; // LOCAL MOD: default brand
 
   return (
     <footer className="app-footer mt-auto border-t border-border/40">

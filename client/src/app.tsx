@@ -56,23 +56,75 @@ function removeCustomInjection() {
   document.querySelectorAll("[data-monolith-custom-injection=\"true\"]").forEach((node) => node.remove());
 }
 
+/** LOCAL MOD: public brand cache key — early bootstrap in index.html reads this before React. */
+const PUBLIC_BRAND_CACHE_KEY = "monolith_public_brand";
+
+function setMetaContent(attr: "name" | "property", key: string, content: string) {
+  let el = document.querySelector(`meta[${attr}="${key}"]`) as HTMLMetaElement | null;
+  if (!el) {
+    el = document.createElement("meta");
+    el.setAttribute(attr, key);
+    document.head.appendChild(el);
+  }
+  el.setAttribute("content", content);
+}
+
+function setIconHref(rel: string, href: string) {
+  let link = document.querySelector(`link[rel="${rel}"]`) as HTMLLinkElement | null;
+  if (!link) {
+    link = document.createElement("link");
+    link.rel = rel;
+    document.head.appendChild(link);
+  }
+  // Drop incorrect type from static shell when switching to remote/custom icons
+  link.removeAttribute("type");
+  link.href = href;
+}
+
+/**
+ * LOCAL MOD: always sync title/icon from settings (not only when title starts with Monolith),
+ * and persist for next paint via localStorage so SPA reopen has zero brand flash.
+ */
 function syncDocumentBrand(settings: { site_title?: string; site_description?: string; site_icon?: string }) {
   const siteTitle = settings.site_title?.trim();
   const description = settings.site_description?.trim();
   const icon = settings.site_icon?.trim();
 
-  if (siteTitle && document.title.startsWith("Monolith")) {
-    document.title = description ? `${siteTitle} — ${description}` : siteTitle;
+  if (siteTitle) {
+    // Only replace generic/home titles; leave article titles ("xxx | 站名") alone.
+    const current = document.title || "";
+    const looksGeneric =
+      !current ||
+      current === "浅草物语" ||
+      current === "Monolith" ||
+      current.startsWith("Monolith") ||
+      current.startsWith("浅草物语 —") ||
+      current.startsWith("浅草物语 |") ||
+      current === siteTitle ||
+      (description ? current === `${siteTitle} — ${description}` : false);
+
+    if (looksGeneric) {
+      document.title = description ? `${siteTitle} — ${description}` : siteTitle;
+    }
+
+    setMetaContent("name", "application-name", siteTitle);
+    setMetaContent("property", "og:site_name", siteTitle);
   }
 
   if (icon) {
-    let link = document.querySelector('link[rel="icon"]') as HTMLLinkElement | null;
-    if (!link) {
-      link = document.createElement("link");
-      link.rel = "icon";
-      document.head.appendChild(link);
-    }
-    link.href = icon;
+    setIconHref("icon", icon);
+    setIconHref("apple-touch-icon", icon);
+  }
+
+  try {
+    const cached = {
+      title: siteTitle || "浅草物语",
+      icon: icon || "/favicon.png",
+      updatedAt: Date.now(),
+    };
+    localStorage.setItem(PUBLIC_BRAND_CACHE_KEY, JSON.stringify(cached));
+  } catch {
+    // private mode / blocked storage — ignore
   }
 }
 

@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="书写代码、设计与边缘计算的个人博客。在秩序与混沌的交界处，寻找属于自己的巨石碑。" />
     <meta name="theme-color" content="#0a0a0f" />
+    <meta name="application-name" content="浅草物语" />
 
     <!-- Open Graph 默认标签（SPA 首次抓取时的兜底） -->
     <meta property="og:title" content="浅草物语" />
@@ -21,7 +22,9 @@
     <meta name="twitter:image" content="/og-default.png" />
 
     <title>浅草物语</title>
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- LOCAL MOD: real favicon assets (favicon.svg does not exist in public/) -->
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="alternate" type="application/rss+xml" title="浅草物语 RSS" href="/rss.xml" />
   </head>
   <body class="min-h-full flex flex-col font-sans bg-background text-foreground">
@@ -36,6 +39,42 @@
         // 同步 theme-color
         var m = document.querySelector('meta[name="theme-color"]');
         if (m) m.setAttribute('content', d === 'light' ? '#ffffff' : '#0a0a0f');
+      })();
+    </script>
+    <!-- LOCAL MOD: brand bootstrap — apply cached site title/icon before React to avoid Monolith flash -->
+    <script>
+      (function () {
+        try {
+          var raw = localStorage.getItem('monolith_public_brand');
+          if (!raw) return;
+          var brand = JSON.parse(raw);
+          if (!brand || typeof brand !== 'object') return;
+          var title = typeof brand.title === 'string' ? brand.title.trim() : '';
+          var icon = typeof brand.icon === 'string' ? brand.icon.trim() : '';
+          if (title) {
+            document.title = title;
+            var appName = document.querySelector('meta[name="application-name"]');
+            if (appName) appName.setAttribute('content', title);
+            var ogSite = document.querySelector('meta[property="og:site_name"]');
+            if (ogSite) ogSite.setAttribute('content', title);
+            var ogTitle = document.querySelector('meta[property="og:title"]');
+            if (ogTitle) ogTitle.setAttribute('content', title);
+            var twTitle = document.querySelector('meta[name="twitter:title"]');
+            if (twTitle) twTitle.setAttribute('content', title);
+          }
+          if (icon) {
+            var link = document.querySelector('link[rel="icon"]');
+            if (!link) {
+              link = document.createElement('link');
+              link.rel = 'icon';
+              document.head.appendChild(link);
+            }
+            link.type = '';
+            link.href = icon;
+            var apple = document.querySelector('link[rel="apple-touch-icon"]');
+            if (apple) apple.href = icon;
+          }
+        } catch (e) {}
       })();
     </script>
     <div id="root" class="min-h-screen flex flex-col"></div>

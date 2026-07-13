@@ -77,3 +77,9 @@ tests/output/
 # ✅ SECURITY.md          — 安全政策
 # ✅ PRIVACY.md           — 隐私政策
 # ✅ README.md / LICENSE  — 项目门面
+
+# ────────────────────── LOCAL MOD: 本机备份/临时产物（不推送）──────────────────
+.backup/
+*.bak
+*.bak.*
+*.bak.home-a

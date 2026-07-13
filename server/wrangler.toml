@@ -5,9 +5,9 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 # 非敏感配置变量（敏感的用 wrangler secret put）
-BLOG_NAME = "Monolith"
+BLOG_NAME = "浅草物语"
 # 对外公开域名（用于 sitemap.xml / robots.txt 的绝对 URL）
-SITE_ORIGIN = "https://monolith-client.pages.dev"
+SITE_ORIGIN = "https://www.chillg.de"
 # 运行时默认不做建表/补列；部署流程负责迁移与 schema reconcile。
 AUTO_SCHEMA_MIGRATION = "false"
 

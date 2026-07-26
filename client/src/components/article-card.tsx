@@ -69,7 +69,7 @@ export function ArticleCard({ post }: { post: PostMeta }) {
       style={style}
     >
       <article
-        className={`relative flex h-[var(--article-card-height)] overflow-hidden rounded-md border border-border/20 bg-background/30 transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:-translate-y-[2px] hover:border-border/55 hover:bg-card/28 ${isBackground ? "bg-card/18" : ""}`}
+        className={`relative flex min-h-[var(--article-card-height)] overflow-hidden rounded-md border border-border/20 bg-background/30 transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:-translate-y-[2px] hover:border-border/55 hover:bg-card/28 md:h-[var(--article-card-height)] ${isBackground ? "bg-card/18" : ""}`}
       >
         {imageMode === "background" && (
           <>
@@ -79,8 +79,12 @@ export function ArticleCard({ post }: { post: PostMeta }) {
           </>
         )}
         {imageMode === "side" && (
-          <div className="grid min-h-0 w-full md:grid-cols-[minmax(0,1fr)_34%]">
-            <div className="flex min-w-0 flex-col p-[16px] sm:p-[18px] lg:p-[20px]">{body}</div>
+          <div className="flex min-h-0 w-full flex-col md:grid md:grid-cols-[minmax(0,1fr)_34%]">
+            {/* LOCAL MOD (2026-07-26): legacy 100×220 cards resolve to side mode. Keep a top cover below md; upstream hid the only image there. */}
+            <div className="h-[132px] overflow-hidden border-b border-border/16 md:hidden">
+              <img src={cover} alt={post.title} loading="lazy" decoding="async" className="h-full w-full object-cover opacity-80 transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:scale-[1.04]" />
+            </div>
+            <div className="flex min-w-0 flex-1 flex-col p-[16px] sm:p-[18px] lg:p-[20px]">{body}</div>
             <div className="hidden border-l border-border/16 md:block">
               <img src={cover} alt={post.title} loading="lazy" decoding="async" className="h-full w-full object-cover opacity-80 transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:scale-[1.04]" />
             </div>

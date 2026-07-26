@@ -4,13 +4,14 @@
    ────────────────────────────────────────────── */
 
 import { drizzle } from "drizzle-orm/d1";
-import { eq, desc, sql, inArray } from "drizzle-orm";
-import { posts, tags, postTags, pages, comments, reactions, visits, postVersions } from "../../db/schema";
+import { and, eq, desc, inArray, lt, sql } from "drizzle-orm";
+import { posts, tags, postTags, pages, comments, guestbookMessages, friendLinks, reactions, visits, postVersions } from "../../db/schema";
 import type {
   IDatabase, Post, PostSummary, Tag, Page, PageSummary,
   CreatePostInput, UpdatePostInput, UpsertPageInput,
-  BackupData, ImportResult, ViewStats, Comment, CreateCommentInput, PostVersion,
+  BackupData, ImportResult, ViewStats, Comment, CreateCommentInput, GuestbookMessage, CreateGuestbookMessageInput, FriendLink, CreateFriendLinkInput, UpdateFriendLinkInput, PostVersion,
 } from "../interfaces";
+import { normalizeCardHeight, normalizeCardWidth } from "./card-layout";
 
 type DrizzleD1 = ReturnType<typeof drizzle>;
 
@@ -34,11 +35,14 @@ export class D1Adapter implements IDatabase {
         await this.ensureSettingsTable();
         await this.ensurePagesTable();
         await this.ensureCommentsTable();
+        await this.ensureGuestbookMessagesTable();
+        await this.ensureFriendLinksTable();
         await this.ensureSeriesColumns();
         await this.ensureReactionsTable();
         await this.ensureVisitsTable();
         await this.ensureCategoryColumn();
         await this.ensureCoverImageColumn();
+        await this.ensureCardLayoutColumns();
       })();
     }
     await this.schemaReady;
@@ -64,10 +68,14 @@ export class D1Adapter implements IDatabase {
         "series_order",
         "category",
         "cover_image",
+        "card_width",
+        "card_height",
       ],
       settings: ["key", "value"],
       pages: ["id", "slug", "title", "content", "sort_order", "published", "show_in_nav", "created_at", "updated_at"],
       comments: ["id", "post_id", "author_name", "author_email", "content", "approved", "created_at"],
+      guestbook_messages: ["id", "author_name", "author_email", "content", "approved", "created_at"],
+      friend_links: ["id", "name", "url", "description", "avatar_url", "owner_name", "owner_email", "status", "source", "sort_order", "created_at", "updated_at", "reviewed_at"],
       reactions: ["id", "post_slug", "type", "ip_hash", "created_at"],
       visits: ["id", "path", "country", "referer_domain", "device_type", "created_at"],
     };
@@ -202,6 +210,15 @@ export class D1Adapter implements IDatabase {
     } catch { /* 已存在 */ }
   }
 
+  private async ensureCardLayoutColumns(): Promise<void> {
+    try {
+      await this.db.run(sql`ALTER TABLE posts ADD COLUMN card_width INTEGER NOT NULL DEFAULT 100`);
+    } catch { /* 已存在 */ }
+    try {
+      await this.db.run(sql`ALTER TABLE posts ADD COLUMN card_height INTEGER NOT NULL DEFAULT 220`);
+    } catch { /* 已存在 */ }
+  }
+
   private async ensurePagesTable(): Promise<void> {
     await this.db.run(sql`CREATE TABLE IF NOT EXISTS pages (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -229,6 +246,37 @@ export class D1Adapter implements IDatabase {
     await this.db.run(sql`CREATE INDEX IF NOT EXISTS comments_post_id_idx ON comments(post_id)`);
   }
 
+  private async ensureGuestbookMessagesTable(): Promise<void> {
+    await this.db.run(sql`CREATE TABLE IF NOT EXISTS guestbook_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      author_name TEXT NOT NULL,
+      author_email TEXT NOT NULL DEFAULT '',
+      content TEXT NOT NULL,
+      approved INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+    await this.db.run(sql`CREATE INDEX IF NOT EXISTS guestbook_messages_approved_idx ON guestbook_messages(approved, id DESC)`);
+  }
+
+  private async ensureFriendLinksTable(): Promise<void> {
+    await this.db.run(sql`CREATE TABLE IF NOT EXISTS friend_links (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      url TEXT NOT NULL UNIQUE,
+      description TEXT NOT NULL DEFAULT '',
+      avatar_url TEXT NOT NULL DEFAULT '',
+      owner_name TEXT NOT NULL DEFAULT '',
+      owner_email TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending',
+      source TEXT NOT NULL DEFAULT 'manual',
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      reviewed_at TEXT
+    )`);
+    await this.db.run(sql`CREATE INDEX IF NOT EXISTS friend_links_status_idx ON friend_links(status)`);
+  }
+
   /* ── 文章 ─────────────────────── */
 
   async getPublishedPosts(): Promise<PostSummary[]> {
@@ -240,6 +288,8 @@ export class D1Adapter implements IDatabase {
         excerpt: posts.excerpt,
         coverColor: posts.coverColor,
         coverImage: posts.coverImage,
+        cardWidth: posts.cardWidth,
+        cardHeight: posts.cardHeight,
         createdAt: posts.createdAt,
         pinned: posts.pinned,
         publishAt: posts.publishAt,
@@ -261,6 +311,8 @@ export class D1Adapter implements IDatabase {
       excerpt: post.excerpt || "",
       coverColor: post.coverColor || "",
       coverImage: post.coverImage || "",
+      cardWidth: normalizeCardWidth(post.cardWidth),
+      cardHeight: normalizeCardHeight(post.cardHeight),
       createdAt: post.createdAt,
       tags: tagMap.get(post.id) || [],
       pinned: post.pinned,
@@ -286,6 +338,8 @@ export class D1Adapter implements IDatabase {
       excerpt: post.excerpt || "",
       coverColor: post.coverColor || "",
       coverImage: post.coverImage || "",
+      cardWidth: normalizeCardWidth(post.cardWidth),
+      cardHeight: normalizeCardHeight(post.cardHeight),
       published: post.published,
       listed: post.listed,
       createdAt: post.createdAt,
@@ -317,6 +371,8 @@ export class D1Adapter implements IDatabase {
       excerpt: post.excerpt || "",
       coverColor: post.coverColor || "",
       coverImage: post.coverImage || "",
+      cardWidth: normalizeCardWidth(post.cardWidth),
+      cardHeight: normalizeCardHeight(post.cardHeight),
       published: post.published,
       listed: post.listed,
       createdAt: post.createdAt,
@@ -341,6 +397,8 @@ export class D1Adapter implements IDatabase {
         excerpt: data.excerpt || "",
         coverColor: data.coverColor || "from-gray-500/20 to-gray-600/20",
         coverImage: data.coverImage || "",
+        cardWidth: normalizeCardWidth(data.cardWidth),
+        cardHeight: normalizeCardHeight(data.cardHeight),
         published: data.published ?? true,
         listed: data.listed ?? true,
         pinned: data.pinned ?? false,
@@ -363,6 +421,8 @@ export class D1Adapter implements IDatabase {
       excerpt: newPost.excerpt || "",
       coverColor: newPost.coverColor || "",
       coverImage: newPost.coverImage || "",
+      cardWidth: normalizeCardWidth(newPost.cardWidth),
+      cardHeight: normalizeCardHeight(newPost.cardHeight),
       published: newPost.published,
       listed: newPost.listed,
       createdAt: newPost.createdAt,
@@ -394,6 +454,8 @@ export class D1Adapter implements IDatabase {
         ...(data.excerpt !== undefined && { excerpt: data.excerpt }),
         ...(data.coverColor !== undefined && { coverColor: data.coverColor }),
         ...(data.coverImage !== undefined && { coverImage: data.coverImage }),
+        ...(data.cardWidth !== undefined && { cardWidth: normalizeCardWidth(data.cardWidth) }),
+        ...(data.cardHeight !== undefined && { cardHeight: normalizeCardHeight(data.cardHeight) }),
         ...(data.published !== undefined && { published: data.published }),
         ...(data.listed !== undefined && { listed: data.listed }),
         ...(data.pinned !== undefined && { pinned: data.pinned }),
@@ -418,6 +480,8 @@ export class D1Adapter implements IDatabase {
       excerpt: updated.excerpt || "",
       coverColor: updated.coverColor || "",
       coverImage: updated.coverImage || "",
+      cardWidth: normalizeCardWidth(updated.cardWidth),
+      cardHeight: normalizeCardHeight(updated.cardHeight),
       published: updated.published,
       listed: updated.listed,
       createdAt: updated.createdAt,
@@ -692,6 +756,8 @@ export class D1Adapter implements IDatabase {
         excerpt: p.excerpt || "",
         coverColor: p.coverColor || "",
         coverImage: p.coverImage || "",
+        cardWidth: normalizeCardWidth(p.cardWidth),
+        cardHeight: normalizeCardHeight(p.cardHeight),
         category: p.category || "",
         seriesSlug: p.seriesSlug || null,
         seriesOrder: p.seriesOrder ?? 0,
@@ -741,6 +807,8 @@ export class D1Adapter implements IDatabase {
               excerpt: post.excerpt || "",
               coverColor: post.coverColor || "",
               coverImage: post.coverImage || "",
+              cardWidth: normalizeCardWidth(post.cardWidth),
+              cardHeight: normalizeCardHeight(post.cardHeight),
               published: post.published ?? true,
               listed: post.listed ?? true,
               pinned: post.pinned ?? false,
@@ -763,6 +831,8 @@ export class D1Adapter implements IDatabase {
             excerpt: post.excerpt || "",
             coverColor: post.coverColor || "",
             coverImage: post.coverImage || "",
+            cardWidth: normalizeCardWidth(post.cardWidth),
+            cardHeight: normalizeCardHeight(post.cardHeight),
             published: post.published ?? true,
             listed: post.listed ?? true,
             pinned: post.pinned ?? false,
@@ -807,6 +877,8 @@ export class D1Adapter implements IDatabase {
         excerpt: posts.excerpt,
         coverColor: posts.coverColor,
         coverImage: posts.coverImage,
+        cardWidth: posts.cardWidth,
+        cardHeight: posts.cardHeight,
         createdAt: posts.createdAt,
         pinned: posts.pinned,
         publishAt: posts.publishAt,
@@ -830,6 +902,8 @@ export class D1Adapter implements IDatabase {
         excerpt: post.excerpt || "",
         coverColor: post.coverColor || "",
         coverImage: post.coverImage || "",
+        cardWidth: normalizeCardWidth(post.cardWidth),
+        cardHeight: normalizeCardHeight(post.cardHeight),
         createdAt: post.createdAt,
         tags: await this.getPostTags(post.id),
         pinned: post.pinned,
@@ -1002,6 +1076,191 @@ export class D1Adapter implements IDatabase {
           WHERE p.slug = ${postSlug} AND c.approved = 1`
     );
     return (result.results?.[0] as { count: number } | undefined)?.count ?? 0;
+  }
+
+  /* ── 留言板 ─────────────────── */
+
+  private toGuestbookMessage(row: typeof guestbookMessages.$inferSelect): GuestbookMessage {
+    return {
+      id: row.id,
+      authorName: row.authorName,
+      authorEmail: row.authorEmail,
+      content: row.content,
+      approved: row.approved,
+      createdAt: row.createdAt,
+    };
+  }
+
+  async getApprovedGuestbookMessages(limit = 21, beforeId?: number): Promise<GuestbookMessage[]> {
+    const rows = await this.db
+      .select()
+      .from(guestbookMessages)
+      .where(and(
+        eq(guestbookMessages.approved, true),
+        beforeId === undefined ? undefined : lt(guestbookMessages.id, beforeId),
+      ))
+      .orderBy(desc(guestbookMessages.id))
+      .limit(limit);
+    return rows.map((row) => this.toGuestbookMessage(row));
+  }
+
+  async addGuestbookMessage(input: CreateGuestbookMessageInput): Promise<GuestbookMessage> {
+    const [created] = await this.db
+      .insert(guestbookMessages)
+      .values({
+        authorName: input.authorName,
+        authorEmail: input.authorEmail || "",
+        content: input.content,
+        approved: false,
+      })
+      .returning();
+    return this.toGuestbookMessage(created);
+  }
+
+  async getAllGuestbookMessages(limit = 51, beforeId?: number): Promise<GuestbookMessage[]> {
+    const rows = await this.db
+      .select()
+      .from(guestbookMessages)
+      .where(beforeId === undefined ? undefined : lt(guestbookMessages.id, beforeId))
+      .orderBy(desc(guestbookMessages.id))
+      .limit(limit);
+    return rows.map((row) => this.toGuestbookMessage(row));
+  }
+
+  async approveGuestbookMessage(id: number): Promise<boolean> {
+    const result = await this.db
+      .update(guestbookMessages)
+      .set({ approved: true })
+      .where(eq(guestbookMessages.id, id))
+      .returning();
+    return result.length > 0;
+  }
+
+  async deleteGuestbookMessage(id: number): Promise<boolean> {
+    const result = await this.db
+      .delete(guestbookMessages)
+      .where(eq(guestbookMessages.id, id))
+      .returning();
+    return result.length > 0;
+  }
+
+  /* ── 友链 ─────────────────── */
+
+  private toFriendLink(row: typeof friendLinks.$inferSelect): FriendLink {
+    return {
+      id: row.id,
+      name: row.name,
+      url: row.url,
+      description: row.description,
+      avatarUrl: row.avatarUrl,
+      ownerName: row.ownerName,
+      ownerEmail: row.ownerEmail,
+      status: row.status as FriendLink["status"],
+      source: row.source as FriendLink["source"],
+      sortOrder: row.sortOrder,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      reviewedAt: row.reviewedAt,
+    };
+  }
+
+  async getApprovedFriendLinks(): Promise<FriendLink[]> {
+    await this.ensureFriendLinksTable();
+    const rows = await this.db
+      .select()
+      .from(friendLinks)
+      .where(eq(friendLinks.status, "approved"))
+      .orderBy(friendLinks.sortOrder, friendLinks.name);
+    return rows.map((row) => this.toFriendLink(row));
+  }
+
+  async getAllFriendLinks(): Promise<FriendLink[]> {
+    await this.ensureFriendLinksTable();
+    const rows = await this.db
+      .select()
+      .from(friendLinks)
+      .orderBy(friendLinks.sortOrder, desc(friendLinks.createdAt));
+    return rows.map((row) => this.toFriendLink(row));
+  }
+
+  async createFriendLink(input: CreateFriendLinkInput): Promise<FriendLink> {
+    await this.ensureFriendLinksTable();
+    const [created] = await this.db
+      .insert(friendLinks)
+      .values({
+        name: input.name,
+        url: input.url,
+        description: input.description || "",
+        avatarUrl: input.avatarUrl || "",
+        ownerName: input.ownerName || "",
+        ownerEmail: input.ownerEmail || "",
+        status: input.status || "pending",
+        source: input.source || "manual",
+        sortOrder: input.sortOrder ?? 0,
+        reviewedAt: input.status === "approved" || input.status === "rejected" ? sql`datetime('now')` as never : null,
+      })
+      .returning();
+    return this.toFriendLink(created);
+  }
+
+  async updateFriendLink(id: number, input: UpdateFriendLinkInput): Promise<FriendLink | null> {
+    await this.ensureFriendLinksTable();
+    const patch = {
+      ...(input.name !== undefined && { name: input.name }),
+      ...(input.url !== undefined && { url: input.url }),
+      ...(input.description !== undefined && { description: input.description }),
+      ...(input.avatarUrl !== undefined && { avatarUrl: input.avatarUrl }),
+      ...(input.ownerName !== undefined && { ownerName: input.ownerName }),
+      ...(input.ownerEmail !== undefined && { ownerEmail: input.ownerEmail }),
+      ...(input.status !== undefined && { status: input.status }),
+      ...(input.source !== undefined && { source: input.source }),
+      ...(input.sortOrder !== undefined && { sortOrder: input.sortOrder }),
+      ...(input.status === "approved" || input.status === "rejected" ? { reviewedAt: sql`datetime('now')` as never } : {}),
+      updatedAt: sql`datetime('now')` as never,
+    };
+    const [updated] = await this.db.update(friendLinks).set(patch).where(eq(friendLinks.id, id)).returning();
+    return updated ? this.toFriendLink(updated) : null;
+  }
+
+  async approveFriendLink(id: number): Promise<boolean> {
+    return Boolean(await this.updateFriendLink(id, { status: "approved" }));
+  }
+
+  async rejectFriendLink(id: number): Promise<boolean> {
+    return Boolean(await this.updateFriendLink(id, { status: "rejected" }));
+  }
+
+  async deleteFriendLink(id: number): Promise<boolean> {
+    await this.ensureFriendLinksTable();
+    const result = await this.db.delete(friendLinks).where(eq(friendLinks.id, id)).returning();
+    return result.length > 0;
+  }
+
+  async importFriendLinks(input: CreateFriendLinkInput[]): Promise<number> {
+    await this.ensureFriendLinksTable();
+    let imported = 0;
+    for (const item of input) {
+      await this.db
+        .insert(friendLinks)
+        .values({
+          name: item.name,
+          url: item.url,
+          description: item.description || "",
+          avatarUrl: item.avatarUrl || "",
+          ownerName: item.ownerName || "",
+          ownerEmail: item.ownerEmail || "",
+          status: item.status || "approved",
+          source: item.source || "imported",
+          sortOrder: item.sortOrder ?? 0,
+          reviewedAt: sql`datetime('now')` as never,
+        })
+        .onConflictDoNothing()
+        .returning()
+        .then((rows) => {
+          imported += rows.length;
+        });
+    }
+    return imported;
   }
 
   async getSeriesPosts(seriesSlug: string): Promise<{ slug: string; title: string; seriesOrder: number }[]> {

@@ -6,13 +6,14 @@
 
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-import { eq, desc, sql, inArray } from "drizzle-orm";
-import { pgPosts, pgTags, pgPostTags, pgPages, pgSettings, pgComments, pgReactions, pgVisits, pgPostVersions } from "../../db/schema-pg";
+import { and, eq, desc, inArray, lt, sql } from "drizzle-orm";
+import { pgPosts, pgTags, pgPostTags, pgPages, pgSettings, pgComments, pgGuestbookMessages, pgFriendLinks, pgReactions, pgVisits, pgPostVersions } from "../../db/schema-pg";
 import type {
   IDatabase, Post, PostSummary, Tag, Page, PageSummary,
   CreatePostInput, UpdatePostInput, UpsertPageInput,
-  BackupData, ImportResult, ViewStats, Comment, CreateCommentInput, PostVersion
+  BackupData, ImportResult, ViewStats, Comment, CreateCommentInput, GuestbookMessage, CreateGuestbookMessageInput, FriendLink, CreateFriendLinkInput, UpdateFriendLinkInput, PostVersion
 } from "../interfaces";
+import { normalizeCardHeight, normalizeCardWidth } from "./card-layout";
 
 type DrizzlePG = ReturnType<typeof drizzle>;
 
@@ -42,6 +43,8 @@ export class PostgresAdapter implements IDatabase {
         excerpt TEXT DEFAULT '',
         cover_color TEXT DEFAULT 'from-gray-500/20 to-gray-600/20',
         cover_image TEXT DEFAULT '',
+        card_width INTEGER NOT NULL DEFAULT 100,
+        card_height INTEGER NOT NULL DEFAULT 220,
         published BOOLEAN NOT NULL DEFAULT true,
         listed BOOLEAN NOT NULL DEFAULT true,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -70,6 +73,12 @@ export class PostgresAdapter implements IDatabase {
     `.catch(() => {});
     await this.client`
       ALTER TABLE posts ADD COLUMN IF NOT EXISTS cover_image TEXT DEFAULT ''
+    `.catch(() => {});
+    await this.client`
+      ALTER TABLE posts ADD COLUMN IF NOT EXISTS card_width INTEGER NOT NULL DEFAULT 100
+    `.catch(() => {});
+    await this.client`
+      ALTER TABLE posts ADD COLUMN IF NOT EXISTS card_height INTEGER NOT NULL DEFAULT 220
     `.catch(() => {});
     await this.client`
       CREATE TABLE IF NOT EXISTS tags (
@@ -115,6 +124,35 @@ export class PostgresAdapter implements IDatabase {
       )
     `;
     await this.client`CREATE INDEX IF NOT EXISTS pg_comments_post_id_idx ON comments(post_id)`;
+    await this.client`
+      CREATE TABLE IF NOT EXISTS guestbook_messages (
+        id SERIAL PRIMARY KEY,
+        author_name TEXT NOT NULL,
+        author_email TEXT NOT NULL DEFAULT '',
+        content TEXT NOT NULL,
+        approved BOOLEAN NOT NULL DEFAULT false,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `;
+    await this.client`CREATE INDEX IF NOT EXISTS pg_guestbook_messages_approved_idx ON guestbook_messages(approved, id DESC)`;
+    await this.client`
+      CREATE TABLE IF NOT EXISTS friend_links (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        url TEXT NOT NULL UNIQUE,
+        description TEXT NOT NULL DEFAULT '',
+        avatar_url TEXT NOT NULL DEFAULT '',
+        owner_name TEXT NOT NULL DEFAULT '',
+        owner_email TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'pending',
+        source TEXT NOT NULL DEFAULT 'manual',
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        reviewed_at TIMESTAMPTZ
+      )
+    `;
+    await this.client`CREATE INDEX IF NOT EXISTS pg_friend_links_status_idx ON friend_links(status)`;
     await this.client`
       CREATE TABLE IF NOT EXISTS post_versions (
         id SERIAL PRIMARY KEY,
@@ -202,6 +240,10 @@ export class PostgresAdapter implements IDatabase {
     return d instanceof Date ? d.toISOString() : d;
   }
 
+  private nullableTs(d: Date | string | null): string | null {
+    return d ? this.ts(d) : null;
+  }
+
   /* ── 文章 ─────────────────────── */
 
   async getPublishedPosts(): Promise<PostSummary[]> {
@@ -213,6 +255,8 @@ export class PostgresAdapter implements IDatabase {
         excerpt: pgPosts.excerpt,
         coverColor: pgPosts.coverColor,
         coverImage: pgPosts.coverImage,
+        cardWidth: pgPosts.cardWidth,
+        cardHeight: pgPosts.cardHeight,
         createdAt: pgPosts.createdAt,
         pinned: pgPosts.pinned,
         publishAt: pgPosts.publishAt,
@@ -234,6 +278,8 @@ export class PostgresAdapter implements IDatabase {
       excerpt: post.excerpt || "",
       coverColor: post.coverColor || "",
       coverImage: post.coverImage || "",
+      cardWidth: normalizeCardWidth(post.cardWidth),
+      cardHeight: normalizeCardHeight(post.cardHeight),
       createdAt: this.ts(post.createdAt),
       tags: tagMap.get(post.id) || [],
       pinned: post.pinned,
@@ -259,6 +305,8 @@ export class PostgresAdapter implements IDatabase {
       excerpt: post.excerpt || "",
       coverColor: post.coverColor || "",
       coverImage: post.coverImage || "",
+      cardWidth: normalizeCardWidth(post.cardWidth),
+      cardHeight: normalizeCardHeight(post.cardHeight),
       published: post.published,
       listed: post.listed,
       createdAt: this.ts(post.createdAt),
@@ -290,6 +338,8 @@ export class PostgresAdapter implements IDatabase {
       excerpt: post.excerpt || "",
       coverColor: post.coverColor || "",
       coverImage: post.coverImage || "",
+      cardWidth: normalizeCardWidth(post.cardWidth),
+      cardHeight: normalizeCardHeight(post.cardHeight),
       published: post.published,
       listed: post.listed,
       createdAt: this.ts(post.createdAt),
@@ -314,6 +364,8 @@ export class PostgresAdapter implements IDatabase {
         excerpt: data.excerpt || "",
         coverColor: data.coverColor || "from-gray-500/20 to-gray-600/20",
         coverImage: data.coverImage || "",
+        cardWidth: normalizeCardWidth(data.cardWidth),
+        cardHeight: normalizeCardHeight(data.cardHeight),
         published: data.published ?? true,
         listed: data.listed ?? true,
         pinned: data.pinned ?? false,
@@ -336,6 +388,8 @@ export class PostgresAdapter implements IDatabase {
       excerpt: newPost.excerpt || "",
       coverColor: newPost.coverColor || "",
       coverImage: newPost.coverImage || "",
+      cardWidth: normalizeCardWidth(newPost.cardWidth),
+      cardHeight: normalizeCardHeight(newPost.cardHeight),
       published: newPost.published,
       listed: newPost.listed,
       createdAt: this.ts(newPost.createdAt),
@@ -367,6 +421,8 @@ export class PostgresAdapter implements IDatabase {
         ...(data.excerpt !== undefined && { excerpt: data.excerpt }),
         ...(data.coverColor !== undefined && { coverColor: data.coverColor }),
         ...(data.coverImage !== undefined && { coverImage: data.coverImage }),
+        ...(data.cardWidth !== undefined && { cardWidth: normalizeCardWidth(data.cardWidth) }),
+        ...(data.cardHeight !== undefined && { cardHeight: normalizeCardHeight(data.cardHeight) }),
         ...(data.published !== undefined && { published: data.published }),
         ...(data.listed !== undefined && { listed: data.listed }),
         ...(data.pinned !== undefined && { pinned: data.pinned }),
@@ -391,6 +447,8 @@ export class PostgresAdapter implements IDatabase {
       excerpt: updated.excerpt || "",
       coverColor: updated.coverColor || "",
       coverImage: updated.coverImage || "",
+      cardWidth: normalizeCardWidth(updated.cardWidth),
+      cardHeight: normalizeCardHeight(updated.cardHeight),
       published: updated.published,
       listed: updated.listed,
       createdAt: this.ts(updated.createdAt),
@@ -666,6 +724,8 @@ export class PostgresAdapter implements IDatabase {
         excerpt: p.excerpt || "",
         coverColor: p.coverColor || "",
         coverImage: p.coverImage || "",
+        cardWidth: normalizeCardWidth(p.cardWidth),
+        cardHeight: normalizeCardHeight(p.cardHeight),
         published: p.published,
         listed: p.listed,
         createdAt: this.ts(p.createdAt),
@@ -720,6 +780,8 @@ export class PostgresAdapter implements IDatabase {
               excerpt: post.excerpt || "",
               coverColor: post.coverColor || "",
               coverImage: post.coverImage || "",
+              cardWidth: normalizeCardWidth(post.cardWidth),
+              cardHeight: normalizeCardHeight(post.cardHeight),
               published: post.published ?? true,
               listed: post.listed ?? true,
               pinned: post.pinned ?? false,
@@ -742,6 +804,8 @@ export class PostgresAdapter implements IDatabase {
             excerpt: post.excerpt || "",
             coverColor: post.coverColor || "",
             coverImage: post.coverImage || "",
+            cardWidth: normalizeCardWidth(post.cardWidth),
+            cardHeight: normalizeCardHeight(post.cardHeight),
             published: post.published ?? true,
             listed: post.listed ?? true,
             pinned: post.pinned ?? false,
@@ -778,6 +842,8 @@ export class PostgresAdapter implements IDatabase {
         excerpt: pgPosts.excerpt,
         coverColor: pgPosts.coverColor,
         coverImage: pgPosts.coverImage,
+        cardWidth: pgPosts.cardWidth,
+        cardHeight: pgPosts.cardHeight,
         createdAt: pgPosts.createdAt,
         pinned: pgPosts.pinned,
         publishAt: pgPosts.publishAt,
@@ -799,6 +865,8 @@ export class PostgresAdapter implements IDatabase {
         excerpt: post.excerpt || "",
         coverColor: post.coverColor || "",
         coverImage: post.coverImage || "",
+        cardWidth: normalizeCardWidth(post.cardWidth),
+        cardHeight: normalizeCardHeight(post.cardHeight),
         createdAt: this.ts(post.createdAt),
         tags: await this.getPostTags(post.id),
         pinned: post.pinned,
@@ -968,6 +1036,191 @@ export class PostgresAdapter implements IDatabase {
       WHERE p.slug = ${postSlug} AND c.approved = true
     `;
     return row?.count ?? 0;
+  }
+
+  /* ── 留言板 ─────────────────── */
+
+  private toGuestbookMessage(row: typeof pgGuestbookMessages.$inferSelect): GuestbookMessage {
+    return {
+      id: row.id,
+      authorName: row.authorName,
+      authorEmail: row.authorEmail,
+      content: row.content,
+      approved: row.approved,
+      createdAt: this.ts(row.createdAt),
+    };
+  }
+
+  async getApprovedGuestbookMessages(limit = 21, beforeId?: number): Promise<GuestbookMessage[]> {
+    const rows = await this.db
+      .select()
+      .from(pgGuestbookMessages)
+      .where(and(
+        eq(pgGuestbookMessages.approved, true),
+        beforeId === undefined ? undefined : lt(pgGuestbookMessages.id, beforeId),
+      ))
+      .orderBy(desc(pgGuestbookMessages.id))
+      .limit(limit);
+    return rows.map((row) => this.toGuestbookMessage(row));
+  }
+
+  async addGuestbookMessage(input: CreateGuestbookMessageInput): Promise<GuestbookMessage> {
+    const [created] = await this.db
+      .insert(pgGuestbookMessages)
+      .values({
+        authorName: input.authorName,
+        authorEmail: input.authorEmail || "",
+        content: input.content,
+        approved: false,
+      })
+      .returning();
+    return this.toGuestbookMessage(created);
+  }
+
+  async getAllGuestbookMessages(limit = 51, beforeId?: number): Promise<GuestbookMessage[]> {
+    const rows = await this.db
+      .select()
+      .from(pgGuestbookMessages)
+      .where(beforeId === undefined ? undefined : lt(pgGuestbookMessages.id, beforeId))
+      .orderBy(desc(pgGuestbookMessages.id))
+      .limit(limit);
+    return rows.map((row) => this.toGuestbookMessage(row));
+  }
+
+  async approveGuestbookMessage(id: number): Promise<boolean> {
+    const result = await this.db
+      .update(pgGuestbookMessages)
+      .set({ approved: true })
+      .where(eq(pgGuestbookMessages.id, id))
+      .returning();
+    return result.length > 0;
+  }
+
+  async deleteGuestbookMessage(id: number): Promise<boolean> {
+    const result = await this.db
+      .delete(pgGuestbookMessages)
+      .where(eq(pgGuestbookMessages.id, id))
+      .returning();
+    return result.length > 0;
+  }
+
+  /* ── 友链 ─────────────────── */
+
+  private toFriendLink(row: typeof pgFriendLinks.$inferSelect): FriendLink {
+    return {
+      id: row.id,
+      name: row.name,
+      url: row.url,
+      description: row.description,
+      avatarUrl: row.avatarUrl,
+      ownerName: row.ownerName,
+      ownerEmail: row.ownerEmail,
+      status: row.status as FriendLink["status"],
+      source: row.source as FriendLink["source"],
+      sortOrder: row.sortOrder,
+      createdAt: this.ts(row.createdAt),
+      updatedAt: this.ts(row.updatedAt),
+      reviewedAt: this.nullableTs(row.reviewedAt),
+    };
+  }
+
+  async getApprovedFriendLinks(): Promise<FriendLink[]> {
+    await this.ensureCoreTables();
+    const rows = await this.db
+      .select()
+      .from(pgFriendLinks)
+      .where(eq(pgFriendLinks.status, "approved"))
+      .orderBy(pgFriendLinks.sortOrder, pgFriendLinks.name);
+    return rows.map((row) => this.toFriendLink(row));
+  }
+
+  async getAllFriendLinks(): Promise<FriendLink[]> {
+    await this.ensureCoreTables();
+    const rows = await this.db
+      .select()
+      .from(pgFriendLinks)
+      .orderBy(pgFriendLinks.sortOrder, desc(pgFriendLinks.createdAt));
+    return rows.map((row) => this.toFriendLink(row));
+  }
+
+  async createFriendLink(input: CreateFriendLinkInput): Promise<FriendLink> {
+    await this.ensureCoreTables();
+    const [created] = await this.db
+      .insert(pgFriendLinks)
+      .values({
+        name: input.name,
+        url: input.url,
+        description: input.description || "",
+        avatarUrl: input.avatarUrl || "",
+        ownerName: input.ownerName || "",
+        ownerEmail: input.ownerEmail || "",
+        status: input.status || "pending",
+        source: input.source || "manual",
+        sortOrder: input.sortOrder ?? 0,
+        reviewedAt: input.status === "approved" || input.status === "rejected" ? new Date() : null,
+      })
+      .returning();
+    return this.toFriendLink(created);
+  }
+
+  async updateFriendLink(id: number, input: UpdateFriendLinkInput): Promise<FriendLink | null> {
+    await this.ensureCoreTables();
+    const patch = {
+      ...(input.name !== undefined && { name: input.name }),
+      ...(input.url !== undefined && { url: input.url }),
+      ...(input.description !== undefined && { description: input.description }),
+      ...(input.avatarUrl !== undefined && { avatarUrl: input.avatarUrl }),
+      ...(input.ownerName !== undefined && { ownerName: input.ownerName }),
+      ...(input.ownerEmail !== undefined && { ownerEmail: input.ownerEmail }),
+      ...(input.status !== undefined && { status: input.status }),
+      ...(input.source !== undefined && { source: input.source }),
+      ...(input.sortOrder !== undefined && { sortOrder: input.sortOrder }),
+      ...(input.status === "approved" || input.status === "rejected" ? { reviewedAt: new Date() } : {}),
+      updatedAt: new Date(),
+    };
+    const [updated] = await this.db.update(pgFriendLinks).set(patch).where(eq(pgFriendLinks.id, id)).returning();
+    return updated ? this.toFriendLink(updated) : null;
+  }
+
+  async approveFriendLink(id: number): Promise<boolean> {
+    return Boolean(await this.updateFriendLink(id, { status: "approved" }));
+  }
+
+  async rejectFriendLink(id: number): Promise<boolean> {
+    return Boolean(await this.updateFriendLink(id, { status: "rejected" }));
+  }
+
+  async deleteFriendLink(id: number): Promise<boolean> {
+    await this.ensureCoreTables();
+    const result = await this.db.delete(pgFriendLinks).where(eq(pgFriendLinks.id, id)).returning();
+    return result.length > 0;
+  }
+
+  async importFriendLinks(input: CreateFriendLinkInput[]): Promise<number> {
+    await this.ensureCoreTables();
+    let imported = 0;
+    for (const item of input) {
+      await this.db
+        .insert(pgFriendLinks)
+        .values({
+          name: item.name,
+          url: item.url,
+          description: item.description || "",
+          avatarUrl: item.avatarUrl || "",
+          ownerName: item.ownerName || "",
+          ownerEmail: item.ownerEmail || "",
+          status: item.status || "approved",
+          source: item.source || "imported",
+          sortOrder: item.sortOrder ?? 0,
+          reviewedAt: new Date(),
+        })
+        .onConflictDoNothing()
+        .returning()
+        .then((rows) => {
+          imported += rows.length;
+        });
+    }
+    return imported;
   }
 
   async getSeriesPosts(seriesSlug: string): Promise<{ slug: string; title: string; seriesOrder: number }[]> {

@@ -9,7 +9,7 @@ import { cors } from "hono/cors";
 import { sign, verify } from "hono/jwt";
 import type { Context } from "hono";
 import { createDatabase, createObjectStorage } from "./storage/factory";
-import type { CreatePostInput, IDatabase } from "./storage/interfaces";
+import type { CreateFriendLinkInput, CreatePostInput, FriendLink, IDatabase } from "./storage/interfaces";
 import type { IObjectStorage } from "./storage/interfaces";
 import { writeAnalyticsPoint, isWebsiteAllowed } from "./analytics/ae-tracker";
 import { queryAEAnalytics } from "./analytics/ae-query";
@@ -27,7 +27,7 @@ type Bindings = {
   AUTO_SCHEMA_MIGRATION?: string;
   STORAGE_PROVIDER?: string;
   WEBHOOK_URLS?: string; // 逗号分隔的 Webhook 目标地址
-  SITE_ORIGIN?: string; // 对外公开域名（如 https://monolith-client.pages.dev），用于 sitemap/robots
+  SITE_ORIGIN?: string; // 对外公开域名（如 https://monolith-client.pages.dev），用于 sitemap/robots/RSS
   CLOUDFLARE_ACCOUNT_ID?: string; // AE GraphQL 查询用
   CLOUDFLARE_API_TOKEN?: string; // AE GraphQL 查询用（需要 Account Analytics:Read 权限）
   ANALYTICS_WEBSITE_WHITELIST?: string; // 站点白名单，格式: domain1|domain2 (空=放行所有)
@@ -131,6 +131,101 @@ async function readJson<T>(c: AppContext): Promise<{ ok: true; body: T } | { ok:
   } catch {
     return { ok: false, response: c.json({ error: "请求体必须是有效 JSON" }, 400) };
   }
+}
+
+function normalizeText(value: unknown, maxLength: number): string {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+function normalizeOptionalEmail(value: unknown): string {
+  const email = normalizeText(value, 160);
+  if (!email) return "";
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : "";
+}
+
+function normalizePublicUrl(value: unknown): string {
+  const raw = normalizeText(value, 500);
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return "";
+    parsed.username = "";
+    parsed.password = "";
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return "";
+  }
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  const details = error && typeof error === "object"
+    ? error as { code?: unknown; message?: unknown; cause?: unknown }
+    : {};
+  const code = String(details.code || "");
+  const message = String(details.message || error || "").toLowerCase();
+  return code === "23505"
+    || code === "SQLITE_CONSTRAINT_UNIQUE"
+    || code === "SQLITE_CONSTRAINT"
+    || message.includes("unique constraint")
+    || message.includes("duplicate key")
+    || message.includes("already exists")
+    || (details.cause !== error && isUniqueConstraintError(details.cause));
+}
+
+function parseSocialLinksSetting(value: string): CreateFriendLinkInput[] {
+  if (!value.trim()) return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    const links: CreateFriendLinkInput[] = [];
+    parsed.forEach((item, index) => {
+      if (!item || typeof item !== "object") return;
+      const record = item as Record<string, unknown>;
+      const url = normalizePublicUrl(record.url);
+      const name = normalizeText(record.label, 80) || normalizeText(record.title, 80);
+      const enabled = record.enabled !== false;
+      if (!enabled || !url || !name) return;
+      links.push({
+        name,
+        url,
+        description: normalizeText(record.description, 240),
+        status: "approved",
+        source: "imported",
+        sortOrder: index,
+      });
+    });
+    return links;
+  } catch {
+    return [];
+  }
+}
+
+function publicFriendLink(link: FriendLink) {
+  return {
+    id: link.id,
+    name: link.name,
+    url: link.url,
+    description: link.description,
+    avatarUrl: link.avatarUrl,
+    sortOrder: link.sortOrder,
+  };
+}
+
+function publicGuestbookMessage(message: {
+  id: number;
+  authorName: string;
+  content: string;
+  approved: boolean;
+  createdAt: string;
+}) {
+  return {
+    id: message.id,
+    authorName: message.authorName,
+    content: message.content,
+    approved: message.approved,
+    createdAt: message.createdAt,
+  };
 }
 
 async function readObjectBody(body: ReadableStream<Uint8Array>): Promise<string> {
@@ -514,6 +609,60 @@ app.post("/api/posts/:slug/comments", async (c) => {
   }
 });
 
+// 获取留言板留言（仅已审核，不暴露邮箱）
+app.get("/api/guestbook", async (c) => {
+  const beforeId = Number.parseInt(c.req.query("before") || "", 10);
+  const pageSize = 20;
+  const messages = await c.get("db").getApprovedGuestbookMessages(
+    pageSize + 1,
+    Number.isInteger(beforeId) && beforeId > 0 ? beforeId : undefined,
+  );
+  const hasMore = messages.length > pageSize;
+  const items = messages.slice(0, pageSize).map(publicGuestbookMessage);
+  return c.json({
+    items,
+    nextCursor: hasMore ? items.at(-1)?.id ?? null : null,
+  });
+});
+
+// 提交留言板留言（公开接口，需审核后才显示）
+app.post("/api/guestbook", async (c) => {
+  const ip = getClientIp(c);
+  if (isGuestbookRateLimited(ip, Date.now())) {
+    return c.json({ error: "提交过于频繁，请稍后再试" }, 429);
+  }
+
+  const parsed = await readJson<{
+    authorName: string;
+    authorEmail?: string;
+    content: string;
+    _hp?: string;
+  }>(c);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
+
+  if (body._hp) return c.json({ success: true, message: "留言已提交，等待审核" });
+
+  const authorName = normalizeText(body.authorName, 50);
+  const authorEmail = normalizeOptionalEmail(body.authorEmail);
+  const content = normalizeText(body.content, 2000);
+
+  if (!authorName || !content) {
+    return c.json({ error: "昵称和留言内容不能为空" }, 400);
+  }
+  if (body.authorEmail && !authorEmail) {
+    return c.json({ error: "邮箱格式无效" }, 400);
+  }
+
+  const message = await c.get("db").addGuestbookMessage({
+    authorName,
+    authorEmail,
+    content,
+  });
+  await triggerWebhook(c, "guestbook_message_submitted", { id: message.id, authorName });
+  return c.json({ success: true, message: "留言已提交，等待审核" }, 201);
+});
+
 // 获取文章表情反应统计
 app.get("/api/posts/:slug/reactions", async (c) => {
   const slug = c.req.param("slug");
@@ -579,6 +728,70 @@ app.get("/api/settings/public", async (c) => {
   });
 });
 
+app.get("/api/friends", async (c) => {
+  const db = c.get("db");
+  const links = await db.getApprovedFriendLinks();
+  if (links.length > 0) {
+    return c.json(links.map(publicFriendLink));
+  }
+
+  const settings = await db.getSettings();
+  const legacyLinks = parseSocialLinksSetting(settings.social_links || "");
+  return c.json(legacyLinks.map((link, index) => ({
+    id: -index - 1,
+    name: link.name,
+    url: link.url,
+    description: link.description || "",
+    avatarUrl: link.avatarUrl || "",
+    sortOrder: link.sortOrder ?? index,
+  })));
+});
+
+app.post("/api/friends/apply", async (c) => {
+  const ip = getClientIp(c);
+  if (isFriendLinkRateLimited(ip, Date.now())) {
+    return c.json({ error: "提交过于频繁，请稍后再试" }, 429);
+  }
+
+  const parsed = await readJson<Record<string, unknown>>(c);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
+  const name = normalizeText(body.name, 80);
+  const url = normalizePublicUrl(body.url);
+  const description = normalizeText(body.description, 240);
+  const avatarUrl = normalizePublicUrl(body.avatarUrl);
+  const ownerName = normalizeText(body.ownerName, 80);
+  const ownerEmail = normalizeOptionalEmail(body.ownerEmail);
+
+  if (!name || !url || !description) {
+    return c.json({ error: "请填写站点名称、有效 URL 和简介" }, 400);
+  }
+  if (body.ownerEmail && !ownerEmail) {
+    return c.json({ error: "联系邮箱格式无效" }, 400);
+  }
+
+  try {
+    const link = await c.get("db").createFriendLink({
+      name,
+      url,
+      description,
+      avatarUrl,
+      ownerName,
+      ownerEmail,
+      status: "pending",
+      source: "submission",
+    });
+    await triggerWebhook(c, "friend_link_submitted", { id: link.id, name, url });
+    return c.json({ success: true }, 201);
+  } catch (error) {
+    if (isUniqueConstraintError(error)) {
+      return c.json({ error: "该站点 URL 已提交或已存在" }, 409);
+    }
+    console.error("Failed to create friend link submission", error);
+    return c.json({ error: "友链申请暂时无法提交，请稍后再试" }, 500);
+  }
+});
+
 // 公开流量统计（侧边栏折线图）
 app.get("/api/stats/traffic", async (c) => {
   const db = c.get("db");
@@ -605,12 +818,9 @@ app.get("/rss.xml", async (c) => {
   const settings = await db.getSettings();
   const siteTitle = settings.site_title || "Monolith";
   const siteDesc = settings.site_description || "";
-  // LOCAL MOD (shallow): prefer public origin for custom domain + Pages proxy.
-  // Upstream uses request origin only, which becomes workers.dev when /rss.xml is
-  // reverse-proxied from Pages Functions. Keep in sync with sitemap/robots.
-  // BEGIN LOCAL MOD: RSS siteUrl via SITE_ORIGIN
+  // Prefer public origin: /rss.xml is reverse-proxied via Pages Functions, so
+  // request origin may be *.workers.dev. Keep consistent with sitemap/robots.
   const siteUrl = c.env.SITE_ORIGIN || new URL(c.req.url).origin;
-  // END LOCAL MOD
 
   // 获取最新 20 篇文章
   const allPosts = await db.getRecentPublishedPosts(20);
@@ -681,10 +891,7 @@ app.get("/sitemap.xml", async (c) => {
   </url>`);
   }
 
-  // 独立页面
-  // LOCAL MOD (shallow): frontend route is /page/:slug (see client/src/app.tsx),
-  // not /pages/:slug. Upstream sitemap wrote plural path → 404 for page URLs.
-  // BEGIN LOCAL MOD: sitemap page path singular
+  // 独立页面 — frontend route is /page/:slug (see client/src/app.tsx)
   for (const page of allPages) {
     urls.push(`  <url>
     <loc>${escXml(siteUrl)}/page/${escXml(page.slug)}</loc>
@@ -692,7 +899,6 @@ app.get("/sitemap.xml", async (c) => {
     <priority>0.5</priority>
   </url>`);
   }
-  // END LOCAL MOD
 
   const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
@@ -724,6 +930,14 @@ const loginAttempts = new Map<string, { count: number; firstAttempt: number }>()
 const LOGIN_RATE_LIMIT = 5;       // 最多 5 次
 const LOGIN_RATE_WINDOW = 15 * 60 * 1000; // 15 分钟窗口
 const LOGIN_RATE_MAX_KEYS = 1000;
+const friendLinkAttempts = new Map<string, { count: number; firstAttempt: number }>();
+const FRIEND_LINK_RATE_LIMIT = 3;
+const FRIEND_LINK_RATE_WINDOW = 60 * 60 * 1000;
+const FRIEND_LINK_RATE_MAX_KEYS = 1000;
+const guestbookAttempts = new Map<string, { count: number; firstAttempt: number }>();
+const GUESTBOOK_RATE_LIMIT = 5;
+const GUESTBOOK_RATE_WINDOW = 60 * 60 * 1000;
+const GUESTBOOK_RATE_MAX_KEYS = 1000;
 
 function getClientIp(c: any): string {
   const cfIp = c.req.header("CF-Connecting-IP")?.trim();
@@ -740,6 +954,56 @@ function pruneLoginAttempts(now: number) {
     if (!oldest) break;
     loginAttempts.delete(oldest);
   }
+}
+
+function pruneFriendLinkAttempts(now: number) {
+  for (const [ip, record] of friendLinkAttempts.entries()) {
+    if ((now - record.firstAttempt) >= FRIEND_LINK_RATE_WINDOW) friendLinkAttempts.delete(ip);
+  }
+  while (friendLinkAttempts.size > FRIEND_LINK_RATE_MAX_KEYS) {
+    const oldest = friendLinkAttempts.keys().next().value;
+    if (!oldest) break;
+    friendLinkAttempts.delete(oldest);
+  }
+}
+
+function isFriendLinkRateLimited(ip: string, now: number): boolean {
+  pruneFriendLinkAttempts(now);
+  const record = friendLinkAttempts.get(ip);
+  if (record && record.count >= FRIEND_LINK_RATE_LIMIT && (now - record.firstAttempt) < FRIEND_LINK_RATE_WINDOW) {
+    return true;
+  }
+  if (!record || (now - record.firstAttempt) >= FRIEND_LINK_RATE_WINDOW) {
+    friendLinkAttempts.set(ip, { count: 1, firstAttempt: now });
+  } else {
+    record.count++;
+  }
+  return false;
+}
+
+function pruneGuestbookAttempts(now: number) {
+  for (const [ip, record] of guestbookAttempts.entries()) {
+    if ((now - record.firstAttempt) >= GUESTBOOK_RATE_WINDOW) guestbookAttempts.delete(ip);
+  }
+  while (guestbookAttempts.size > GUESTBOOK_RATE_MAX_KEYS) {
+    const oldest = guestbookAttempts.keys().next().value;
+    if (!oldest) break;
+    guestbookAttempts.delete(oldest);
+  }
+}
+
+function isGuestbookRateLimited(ip: string, now: number): boolean {
+  pruneGuestbookAttempts(now);
+  const record = guestbookAttempts.get(ip);
+  if (record && record.count >= GUESTBOOK_RATE_LIMIT && (now - record.firstAttempt) < GUESTBOOK_RATE_WINDOW) {
+    return true;
+  }
+  if (!record || (now - record.firstAttempt) >= GUESTBOOK_RATE_WINDOW) {
+    guestbookAttempts.set(ip, { count: 1, firstAttempt: now });
+  } else {
+    record.count++;
+  }
+  return false;
 }
 
 function getMissingAuthSecrets(env: Partial<Bindings>) {
@@ -924,6 +1188,42 @@ app.delete("/api/admin/comments/:id", async (c) => {
   const db = c.get("db");
   const ok = await db.deleteComment(id);
   if (!ok) return c.json({ error: "评论不存在" }, 404);
+  return c.json({ success: true });
+});
+
+// 获取所有留言（管理后台）
+app.get("/api/admin/guestbook", async (c) => {
+  const db = c.get("db");
+  const beforeId = Number.parseInt(c.req.query("before") || "", 10);
+  const pageSize = 50;
+  const messages = await db.getAllGuestbookMessages(
+    pageSize + 1,
+    Number.isInteger(beforeId) && beforeId > 0 ? beforeId : undefined,
+  );
+  const items = messages.slice(0, pageSize);
+  return c.json({
+    items,
+    nextCursor: messages.length > pageSize ? items.at(-1)?.id ?? null : null,
+  });
+});
+
+// 审核留言
+app.post("/api/admin/guestbook/:id/approve", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  if (isNaN(id)) return c.json({ error: "无效 ID" }, 400);
+  const db = c.get("db");
+  const ok = await db.approveGuestbookMessage(id);
+  if (!ok) return c.json({ error: "留言不存在" }, 404);
+  return c.json({ success: true });
+});
+
+// 删除留言
+app.delete("/api/admin/guestbook/:id", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  if (isNaN(id)) return c.json({ error: "无效 ID" }, 400);
+  const db = c.get("db");
+  const ok = await db.deleteGuestbookMessage(id);
+  if (!ok) return c.json({ error: "留言不存在" }, 404);
   return c.json({ success: true });
 });
 
@@ -1271,6 +1571,91 @@ app.put("/api/admin/settings", async (c) => {
   const body = parsed.body;
   await db.saveSettings(body);
   return c.json({ success: true });
+});
+
+app.get("/api/admin/friends", async (c) => {
+  const links = await c.get("db").getAllFriendLinks();
+  return c.json(links);
+});
+
+app.post("/api/admin/friends", async (c) => {
+  const parsed = await readJson<Record<string, unknown>>(c);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
+  const name = normalizeText(body.name, 80);
+  const url = normalizePublicUrl(body.url);
+  if (!name || !url) return c.json({ error: "请填写名称和有效 URL" }, 400);
+
+  try {
+    const link = await c.get("db").createFriendLink({
+      name,
+      url,
+      description: normalizeText(body.description, 240),
+      avatarUrl: normalizePublicUrl(body.avatarUrl),
+      ownerName: normalizeText(body.ownerName, 80),
+      ownerEmail: normalizeOptionalEmail(body.ownerEmail),
+      status: body.status === "pending" || body.status === "rejected" ? body.status : "approved",
+      source: "manual",
+      sortOrder: typeof body.sortOrder === "number" ? body.sortOrder : 0,
+    });
+    return c.json(link, 201);
+  } catch {
+    return c.json({ error: "该 URL 已存在" }, 409);
+  }
+});
+
+app.put("/api/admin/friends/:id", async (c) => {
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id)) return c.json({ error: "无效 ID" }, 400);
+  const parsed = await readJson<Record<string, unknown>>(c);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
+  const url = body.url === undefined ? undefined : normalizePublicUrl(body.url);
+  if (body.url !== undefined && !url) return c.json({ error: "URL 无效" }, 400);
+
+  const updated = await c.get("db").updateFriendLink(id, {
+    ...(body.name !== undefined && { name: normalizeText(body.name, 80) }),
+    ...(url !== undefined && { url }),
+    ...(body.description !== undefined && { description: normalizeText(body.description, 240) }),
+    ...(body.avatarUrl !== undefined && { avatarUrl: normalizePublicUrl(body.avatarUrl) }),
+    ...(body.ownerName !== undefined && { ownerName: normalizeText(body.ownerName, 80) }),
+    ...(body.ownerEmail !== undefined && { ownerEmail: normalizeOptionalEmail(body.ownerEmail) }),
+    ...(body.status === "pending" || body.status === "approved" || body.status === "rejected" ? { status: body.status } : {}),
+    ...(typeof body.sortOrder === "number" && { sortOrder: body.sortOrder }),
+  });
+  if (!updated) return c.json({ error: "友链不存在" }, 404);
+  return c.json(updated);
+});
+
+app.post("/api/admin/friends/:id/approve", async (c) => {
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id)) return c.json({ error: "无效 ID" }, 400);
+  const ok = await c.get("db").approveFriendLink(id);
+  if (!ok) return c.json({ error: "友链不存在" }, 404);
+  return c.json({ success: true });
+});
+
+app.post("/api/admin/friends/:id/reject", async (c) => {
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id)) return c.json({ error: "无效 ID" }, 400);
+  const ok = await c.get("db").rejectFriendLink(id);
+  if (!ok) return c.json({ error: "友链不存在" }, 404);
+  return c.json({ success: true });
+});
+
+app.delete("/api/admin/friends/:id", async (c) => {
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id)) return c.json({ error: "无效 ID" }, 400);
+  const ok = await c.get("db").deleteFriendLink(id);
+  if (!ok) return c.json({ error: "友链不存在" }, 404);
+  return c.json({ success: true });
+});
+
+app.post("/api/admin/friends/import-social-links", async (c) => {
+  const settings = await c.get("db").getSettings();
+  const links = parseSocialLinksSetting(settings.social_links || "");
+  const imported = await c.get("db").importFriendLinks(links);
+  return c.json({ imported });
 });
 
 /* ── 数据备份 ──────────────────────────────── */

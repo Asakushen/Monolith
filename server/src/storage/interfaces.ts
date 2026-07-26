@@ -14,6 +14,8 @@ export type Post = {
   excerpt: string;
   coverColor: string;
   coverImage: string;
+  cardWidth: number;
+  cardHeight: number;
   published: boolean;
   listed: boolean;
   createdAt: string;
@@ -33,6 +35,8 @@ export type PostSummary = {
   excerpt: string;
   coverColor: string;
   coverImage: string;
+  cardWidth: number;
+  cardHeight: number;
   createdAt: string;
   tags: string[];
   pinned: boolean;
@@ -72,6 +76,8 @@ export type CreatePostInput = {
   excerpt?: string;
   coverColor?: string;
   coverImage?: string;
+  cardWidth?: number;
+  cardHeight?: number;
   published?: boolean;
   listed?: boolean;
   tags?: string[];
@@ -89,6 +95,8 @@ export type UpdatePostInput = {
   excerpt?: string;
   coverColor?: string;
   coverImage?: string;
+  cardWidth?: number;
+  cardHeight?: number;
   published?: boolean;
   listed?: boolean;
   tags?: string[];
@@ -148,6 +156,54 @@ export type CreateCommentInput = {
   authorEmail?: string;
   content: string;
 };
+
+export type GuestbookMessage = {
+  id: number;
+  authorName: string;
+  authorEmail: string;
+  content: string;
+  approved: boolean;
+  createdAt: string;
+};
+
+export type CreateGuestbookMessageInput = {
+  authorName: string;
+  authorEmail?: string;
+  content: string;
+};
+
+export type FriendLinkStatus = "pending" | "approved" | "rejected";
+export type FriendLinkSource = "manual" | "submission" | "imported";
+
+export type FriendLink = {
+  id: number;
+  name: string;
+  url: string;
+  description: string;
+  avatarUrl: string;
+  ownerName: string;
+  ownerEmail: string;
+  status: FriendLinkStatus;
+  source: FriendLinkSource;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+  reviewedAt: string | null;
+};
+
+export type CreateFriendLinkInput = {
+  name: string;
+  url: string;
+  description?: string;
+  avatarUrl?: string;
+  ownerName?: string;
+  ownerEmail?: string;
+  status?: FriendLinkStatus;
+  source?: FriendLinkSource;
+  sortOrder?: number;
+};
+
+export type UpdateFriendLinkInput = Partial<CreateFriendLinkInput>;
 
 export type PostVersion = {
   id: number;
@@ -223,6 +279,23 @@ export interface IDatabase {
   approveComment(id: number): Promise<boolean>;
   deleteComment(id: number): Promise<boolean>;
   getCommentCount(postSlug: string): Promise<number>;
+
+  /* 留言板 */
+  getApprovedGuestbookMessages(limit?: number, beforeId?: number): Promise<GuestbookMessage[]>;
+  addGuestbookMessage(input: CreateGuestbookMessageInput): Promise<GuestbookMessage>;
+  getAllGuestbookMessages(limit?: number, beforeId?: number): Promise<GuestbookMessage[]>;
+  approveGuestbookMessage(id: number): Promise<boolean>;
+  deleteGuestbookMessage(id: number): Promise<boolean>;
+
+  /* 友链 */
+  getApprovedFriendLinks(): Promise<FriendLink[]>;
+  getAllFriendLinks(): Promise<FriendLink[]>;
+  createFriendLink(input: CreateFriendLinkInput): Promise<FriendLink>;
+  updateFriendLink(id: number, input: UpdateFriendLinkInput): Promise<FriendLink | null>;
+  approveFriendLink(id: number): Promise<boolean>;
+  rejectFriendLink(id: number): Promise<boolean>;
+  deleteFriendLink(id: number): Promise<boolean>;
+  importFriendLinks(input: CreateFriendLinkInput[]): Promise<number>;
 
   /* 系列 */
   getSeriesPosts(seriesSlug: string): Promise<{ slug: string; title: string; seriesOrder: number }[]>;

@@ -10,6 +10,8 @@ export const posts = sqliteTable("posts", {
   excerpt: text("excerpt").default(""),
   coverColor: text("cover_color").default("from-gray-500/20 to-gray-600/20"),
   coverImage: text("cover_image").default(""),
+  cardWidth: integer("card_width").notNull().default(100),
+  cardHeight: integer("card_height").notNull().default(220),
   published: integer("published", { mode: "boolean" }).notNull().default(true),
   listed: integer("listed", { mode: "boolean" }).notNull().default(true),
   createdAt: text("created_at")
@@ -83,6 +85,52 @@ export const comments = sqliteTable(
   },
   (table) => ({
     postIdIdx: index("comments_post_id_idx").on(table.postId),
+  })
+);
+
+/* ── 留言板表 ──────────────────────────────── */
+export const guestbookMessages = sqliteTable(
+  "guestbook_messages",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    authorName: text("author_name").notNull(),
+    authorEmail: text("author_email").notNull().default(""),
+    content: text("content").notNull(),
+    approved: integer("approved", { mode: "boolean" }).notNull().default(false),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+  },
+  (table) => ({
+    approvedIdx: index("guestbook_messages_approved_idx").on(table.approved, table.id),
+  })
+);
+
+/* ── 友链表 ──────────────────────────────── */
+export const friendLinks = sqliteTable(
+  "friend_links",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    name: text("name").notNull(),
+    url: text("url").notNull(),
+    description: text("description").notNull().default(""),
+    avatarUrl: text("avatar_url").notNull().default(""),
+    ownerName: text("owner_name").notNull().default(""),
+    ownerEmail: text("owner_email").notNull().default(""),
+    status: text("status").notNull().default("pending"),
+    source: text("source").notNull().default("manual"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+    updatedAt: text("updated_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+    reviewedAt: text("reviewed_at"),
+  },
+  (table) => ({
+    urlIdx: uniqueIndex("friend_links_url_idx").on(table.url),
+    statusIdx: index("friend_links_status_idx").on(table.status),
   })
 );
 

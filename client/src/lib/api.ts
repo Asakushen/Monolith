@@ -48,6 +48,8 @@ export type PostMeta = {
   excerpt: string | null;
   coverColor: string | null;
   coverImage: string | null;
+  cardWidth: number;
+  cardHeight: number;
   createdAt: string;
   tags: string[];
   pinned: boolean;
@@ -65,6 +67,45 @@ export type Post = PostMeta & {
   seriesOrder: number;
 };
 
+export type FriendLinkStatus = "pending" | "approved" | "rejected";
+export type FriendLinkSource = "manual" | "submission" | "imported";
+
+export type FriendLink = {
+  id: number;
+  name: string;
+  url: string;
+  description: string;
+  avatarUrl: string;
+  ownerName?: string;
+  ownerEmail?: string;
+  status?: FriendLinkStatus;
+  source?: FriendLinkSource;
+  sortOrder: number;
+  createdAt?: string;
+  updatedAt?: string;
+  reviewedAt?: string | null;
+};
+
+export type FriendLinkInput = {
+  name: string;
+  url: string;
+  description?: string;
+  avatarUrl?: string;
+  ownerName?: string;
+  ownerEmail?: string;
+  status?: FriendLinkStatus;
+  sortOrder?: number;
+};
+
+async function readError(res: Response, fallback: string): Promise<string> {
+  try {
+    const body = await res.json() as { error?: string };
+    return body.error || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 /* ── 公开 API ──────────────────────────────── */
 export async function fetchPosts(): Promise<PostMeta[]> {
   return fetchJsonWithCache<PostMeta[]>("/api/posts", 60_000);
@@ -77,6 +118,20 @@ export async function fetchPost(slug: string): Promise<Post> {
 export async function fetchTags(): Promise<{ id: number; name: string }[]> {
   const res = await fetch(`${API_BASE}/api/tags`);
   if (!res.ok) throw new Error("获取标签失败");
+  return res.json();
+}
+
+export async function fetchFriends(): Promise<FriendLink[]> {
+  return fetchJsonWithCache<FriendLink[]>("/api/friends", 60_000);
+}
+
+export async function applyFriendLink(data: FriendLinkInput): Promise<{ success: boolean }> {
+  const res = await fetch(`${API_BASE}/api/friends/apply`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(await readError(res, "提交失败"));
   return res.json();
 }
 
@@ -189,6 +244,9 @@ export async function createPost(data: {
   content: string;
   excerpt?: string;
   coverColor?: string;
+  coverImage?: string;
+  cardWidth?: number;
+  cardHeight?: number;
   published?: boolean;
   tags?: string[];
   pinned?: boolean;
@@ -498,6 +556,20 @@ export type AdminComment = CommentData & {
   postTitle: string;
 };
 
+export type GuestbookMessage = {
+  id: number;
+  authorName: string;
+  authorEmail?: string;
+  content: string;
+  approved: boolean;
+  createdAt: string;
+};
+
+export type GuestbookPage = {
+  items: GuestbookMessage[];
+  nextCursor: number | null;
+};
+
 export async function fetchComments(slug: string): Promise<CommentData[]> {
   const res = await fetch(`${API_BASE}/api/posts/${slug}/comments`);
   if (!res.ok) throw new Error("获取评论失败");
@@ -518,11 +590,100 @@ export async function submitComment(slug: string, data: {
   return res.json();
 }
 
+export async function fetchGuestbookMessages(before?: number): Promise<GuestbookPage> {
+  const query = before ? `?before=${before}` : "";
+  return fetchJsonWithCache<GuestbookPage>(`/api/guestbook${query}`, 60_000);
+}
+
+export async function submitGuestbookMessage(data: {
+  authorName: string;
+  authorEmail?: string;
+  content: string;
+  _hp?: string;
+}): Promise<{ success: boolean; message?: string; error?: string }> {
+  const res = await fetch(`${API_BASE}/api/guestbook`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  return res.json();
+}
+
 export async function fetchAdminComments(): Promise<AdminComment[]> {
   const res = await fetch(`${API_BASE}/api/admin/comments`, {
     headers: authHeaders(),
   });
   if (!res.ok) throw new Error("获取评论失败");
+  return res.json();
+}
+
+export async function fetchAdminGuestbookMessages(before?: number): Promise<GuestbookPage> {
+  const query = before ? `?before=${before}` : "";
+  const res = await fetch(`${API_BASE}/api/admin/guestbook${query}`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error("获取留言失败");
+  return res.json();
+}
+
+export async function fetchAdminFriends(): Promise<FriendLink[]> {
+  const res = await fetch(`${API_BASE}/api/admin/friends`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(await readError(res, "获取友链失败"));
+  return res.json();
+}
+
+export async function createAdminFriend(data: FriendLinkInput): Promise<FriendLink> {
+  const res = await fetch(`${API_BASE}/api/admin/friends`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(await readError(res, "创建友链失败"));
+  return res.json();
+}
+
+export async function updateAdminFriend(id: number, data: Partial<FriendLinkInput>): Promise<FriendLink> {
+  const res = await fetch(`${API_BASE}/api/admin/friends/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(await readError(res, "更新友链失败"));
+  return res.json();
+}
+
+export async function approveFriend(id: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/admin/friends/${id}/approve`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(await readError(res, "审核失败"));
+}
+
+export async function rejectFriend(id: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/admin/friends/${id}/reject`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(await readError(res, "拒绝失败"));
+}
+
+export async function deleteFriend(id: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/admin/friends/${id}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(await readError(res, "删除失败"));
+}
+
+export async function importSocialFriendLinks(): Promise<{ imported: number }> {
+  const res = await fetch(`${API_BASE}/api/admin/friends/import-social-links`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(await readError(res, "导入失败"));
   return res.json();
 }
 
@@ -540,6 +701,22 @@ export async function deleteComment(id: number): Promise<void> {
     headers: authHeaders(),
   });
   if (!res.ok) throw new Error("删除失败");
+}
+
+export async function approveGuestbookMessage(id: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/admin/guestbook/${id}/approve`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(await readError(res, "审核失败"));
+}
+
+export async function deleteGuestbookMessage(id: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/admin/guestbook/${id}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(await readError(res, "删除失败"));
 }
 
 /* ── 媒体管理 ──────────────────────────────── */

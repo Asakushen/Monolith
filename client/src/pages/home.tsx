@@ -8,6 +8,7 @@ import { fetchPosts, fetchCategories, type PostMeta, type CategoryInfo } from "@
 import { AnimateIn } from "@/hooks/use-animate";
 import { SeoHead } from "@/components/seo-head";
 import { ExternalLink, Mail, Rss, Eye, FolderOpen, Hash, ChevronDown, Link2 } from "lucide-react";
+import { clampCardWidth, getArticleCardGridClass } from "@/lib/card-layout";
 
 type PublicSettings = {
   site_title: string;
@@ -385,15 +386,19 @@ export function HomePage() {
               ))}
             </div>
           ) : (
-            <div className="flex flex-col gap-[16px]">
+            <div className="grid grid-cols-1 items-stretch gap-[16px] sm:grid-cols-6 md:grid-cols-12">
               {posts.length > 0 ? (
                 posts.map((post, i) => (
-                  <AnimateIn key={post.slug} delay={`delay-${Math.min(i, 6)}`}>
+                  <AnimateIn
+                    key={post.slug}
+                    delay={`delay-${Math.min(i, 6)}`}
+                    className={getArticleCardGridClass(clampCardWidth(post.cardWidth))}
+                  >
                     <ArticleCard post={post} />
                   </AnimateIn>
                 ))
               ) : (
-                <div className="rounded-md border border-dashed border-border/25 bg-background/20 px-[20px] py-[52px] text-center">
+                <div className="col-span-full rounded-md border border-dashed border-border/25 bg-background/20 px-[20px] py-[52px] text-center">
                   <p className="text-[15px] font-medium text-foreground/80">还没有发布文章</p>
                   <p className="mx-auto mt-[8px] max-w-[360px] text-[13px] leading-[1.7] text-muted-foreground/60">
                     本地数据库初始化后，最新文章会直接出现在这里。

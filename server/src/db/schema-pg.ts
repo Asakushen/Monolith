@@ -15,6 +15,8 @@ export const pgPosts = pgTable("posts", {
   excerpt: text("excerpt").default(""),
   coverColor: text("cover_color").default("from-gray-500/20 to-gray-600/20"),
   coverImage: text("cover_image").default(""),
+  cardWidth: integer("card_width").notNull().default(100),
+  cardHeight: integer("card_height").notNull().default(220),
   published: boolean("published").notNull().default(true),
   listed: boolean("listed").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -84,6 +86,46 @@ export const pgComments = pgTable(
   },
   (table) => ({
     postIdIdx: index("pg_comments_post_id_idx").on(table.postId),
+  })
+);
+
+/* ── 留言板表 ──────────────────────────────── */
+export const pgGuestbookMessages = pgTable(
+  "guestbook_messages",
+  {
+    id: serial("id").primaryKey(),
+    authorName: text("author_name").notNull(),
+    authorEmail: text("author_email").notNull().default(""),
+    content: text("content").notNull(),
+    approved: boolean("approved").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    approvedIdx: index("pg_guestbook_messages_approved_idx").on(table.approved, table.id),
+  })
+);
+
+/* ── 友链表 ──────────────────────────────── */
+export const pgFriendLinks = pgTable(
+  "friend_links",
+  {
+    id: serial("id").primaryKey(),
+    name: text("name").notNull(),
+    url: text("url").notNull(),
+    description: text("description").notNull().default(""),
+    avatarUrl: text("avatar_url").notNull().default(""),
+    ownerName: text("owner_name").notNull().default(""),
+    ownerEmail: text("owner_email").notNull().default(""),
+    status: text("status").notNull().default("pending"),
+    source: text("source").notNull().default("manual"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+  },
+  (table) => ({
+    urlIdx: uniqueIndex("pg_friend_links_url_idx").on(table.url),
+    statusIdx: index("pg_friend_links_status_idx").on(table.status),
   })
 );
 

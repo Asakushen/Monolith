@@ -15,7 +15,7 @@ const BOT_UA_REGEX =
 
 // ========== BEGIN LOCAL MOD: friend-link SSR for /page/link (浅草物语) ==========
 // 合并 upstream 时：整块保留。upstream 若重写本文件，把本段 onRequest 分支与 helpers 再贴回去。
-// 依赖：GET {API_BASE}/api/pages/link 的 content 内含 <a href="https://...">（与后台独立页同源）。
+// 依赖：GET {API_BASE}/api/friends 返回原生审核通过的友链 JSON；旧 /page/link 只保留兼容入口。
 // 策略：对所有 UA 注入（友链检测器常用普通浏览器 UA，不能只认 bot）。
 const FRIEND_LINK_PAGE_SLUG = "link";
 const FRIEND_LINK_PATH = `/page/${FRIEND_LINK_PAGE_SLUG}`;
@@ -100,53 +100,31 @@ async function tryInjectFriendLinks(
   request: Request
 ): Promise<Response | null> {
   const backend = getBackendUrl(context.env);
-  if (!backend) return null;
-
   try {
-    const apiRes = await fetch(`${backend}/api/pages/${FRIEND_LINK_PAGE_SLUG}`, {
-      headers: { "User-Agent": "Monolith-FriendLink-Prerender/1.0" },
+    const dataResponse = await fetch(`${backend}/api/friends`, {
+      headers: { Accept: "application/json", "User-Agent": "MonolithFriendLinkPrerender/1.0" },
     });
-    if (!apiRes.ok) return null;
+    if (!dataResponse.ok) return null;
+    const entries = await dataResponse.json() as Array<{ name?: string; url?: string }>;
+    const links = entries
+      .filter((entry) => typeof entry.url === "string" && /^https?:\/\//i.test(entry.url))
+      .map((entry) => ({ href: entry.url!, label: entry.name?.trim() || entry.url! }));
+    if (!links.length) return null;
 
-    const page = (await apiRes.json()) as {
-      title?: string;
-      content?: string;
-      slug?: string;
-      error?: string;
-    };
-    if (page.error || !page.content) return null;
+    const pageResponse = await context.next();
+    const contentType = pageResponse.headers.get("content-type") || "";
+    if (!contentType.includes("text/html")) return pageResponse;
+    const html = await pageResponse.text();
+    const injected = renderFriendLinks(links);
+    const bodyEnd = html.lastIndexOf("</body>");
+    const enhanced = bodyEnd >= 0
+      ? `${html.slice(0, bodyEnd)}${injected}${html.slice(bodyEnd)}`
+      : `${html}${injected}`;
 
-    const links = extractAbsoluteLinks(page.content);
-    if (links.length === 0) return null;
-
-    const indexUrl = new URL("/", request.url);
-    const assetRes = await context.env.ASSETS.fetch(new Request(indexUrl.toString()));
-    if (!assetRes.ok) return null;
-    let html = await assetRes.text();
-
-    const block = buildFriendLinkPrerenderBlock(links);
-    const pageTitle = page.title || "友链";
-
-    // title / description 顺手改一下，方便人工 curl 确认命中的是友链页
-    html = html.replace(
-      /<title>[^<]*<\/title>/,
-      `<title>${escapeHtmlAttr(pageTitle)} | 浅草物语</title>`
-    );
-
-    // 插在 #root 前：SPA hydrate 后 UI 仍由 React 接管，注入块保留在 DOM 供无 JS 抓取
-    if (html.includes('<div id="root"')) {
-      html = html.replace('<div id="root"', `${block}\n    <div id="root"`);
-    } else if (html.includes("<body")) {
-      html = html.replace(/<body([^>]*)>/i, `<body$1>\n${block}\n`);
-    } else {
-      html = block + html;
-    }
-
-    return new Response(html, {
-      status: 200,
+    return new Response(enhanced, {
+      status: pageResponse.status,
       headers: {
         "Content-Type": "text/html; charset=utf-8",
-        // 友链变更不频繁；短缓存减少打 Workers，改页后几分钟内生效
         "Cache-Control": "public, max-age=120, s-maxage=300, stale-while-revalidate=600",
         "X-Robots-Tag": "index, follow",
         "X-Friend-Link-Prerender": String(links.length),
@@ -156,6 +134,7 @@ async function tryInjectFriendLinks(
     return null;
   }
 }
+
 // ========== END LOCAL MOD: friend-link SSR for /page/link ==========
 
 interface Env {

@@ -29,52 +29,7 @@ function escapeHtmlAttr(s: string): string {
     .replace(/>/g, "&gt;");
 }
 
-/**
- * 从独立页 Markdown/HTML content 中抽取绝对链接。
- * 优先匹配 <a href="https://...">，并尽量取锚文本作 label。
- */
-function extractAbsoluteLinks(content: string): { href: string; label: string }[] {
-  const seen = new Set<string>();
-  const out: { href: string; label: string }[] = [];
-
-  // <a href="https://..." ...>label</a>  （label 可能含嵌套标签，后面再剥）
-  const anchorRe = /<a\s+[^>]*href=["'](https?:\/\/[^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
-  let m: RegExpExecArray | null;
-  while ((m = anchorRe.exec(content)) !== null) {
-    const href = m[1].trim();
-    if (!href || seen.has(href)) continue;
-    // 跳过本站自链重复时可保留；检测脚本需要看到对方域名，自链无害
-    let label = m[2].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-    if (!label) {
-      try {
-        label = new URL(href).hostname;
-      } catch {
-        label = href;
-      }
-    }
-    seen.add(href);
-    out.push({ href, label: label.slice(0, 120) });
-  }
-
-  // 兜底：content 里只有裸 URL、没有 <a> 时
-  if (out.length === 0) {
-    const bareRe = /https?:\/\/[^\s"'<>]+/gi;
-    let b: RegExpExecArray | null;
-    while ((b = bareRe.exec(content)) !== null) {
-      const href = b[0].replace(/[.,;)]+$/, "");
-      if (seen.has(href)) continue;
-      seen.add(href);
-      try {
-        out.push({ href, label: new URL(href).hostname });
-      } catch {
-        out.push({ href, label: href });
-      }
-    }
-  }
-
-  return out;
-}
-
+/** 构建供互链检测器读取的无障碍隐藏链接列表。 */
 function buildFriendLinkPrerenderBlock(links: { href: string; label: string }[]): string {
   const items = links
     .map(
@@ -86,7 +41,7 @@ function buildFriendLinkPrerenderBlock(links: { href: string; label: string }[])
   // id 稳定，便于调试；visually-hidden 风格：对人眼几乎不可见，curl/检测器仍可读 DOM
   // 不用 display:none：少数简陋脚本会跳过；用近零尺寸 + 裁剪更稳
   return [
-    `<!-- LOCAL MOD: friend-link prerender for crawlers / mutual-link checkers; data from /api/pages/${FRIEND_LINK_PAGE_SLUG} -->`,
+    `<!-- LOCAL MOD: friend-link prerender for crawlers / mutual-link checkers; data from /api/friends -->`,
     `<nav id="friend-links-prerender" aria-label="Friend links" style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0">`,
     `  <ul>`,
     items,
@@ -100,6 +55,7 @@ async function tryInjectFriendLinks(
   request: Request
 ): Promise<Response | null> {
   const backend = getBackendUrl(context.env);
+  if (!backend) return null;
   try {
     const dataResponse = await fetch(`${backend}/api/friends`, {
       headers: { Accept: "application/json", "User-Agent": "MonolithFriendLinkPrerender/1.0" },
@@ -115,7 +71,7 @@ async function tryInjectFriendLinks(
     const contentType = pageResponse.headers.get("content-type") || "";
     if (!contentType.includes("text/html")) return pageResponse;
     const html = await pageResponse.text();
-    const injected = renderFriendLinks(links);
+    const injected = buildFriendLinkPrerenderBlock(links);
     const bodyEnd = html.lastIndexOf("</body>");
     const enhanced = bodyEnd >= 0
       ? `${html.slice(0, bodyEnd)}${injected}${html.slice(bodyEnd)}`

@@ -9,28 +9,7 @@ import { AnimateIn } from "@/hooks/use-animate";
 import { SeoHead } from "@/components/seo-head";
 import { ExternalLink, Mail, Rss, Eye, FolderOpen, Hash, ChevronDown, Link2 } from "lucide-react";
 import { clampCardWidth, getArticleCardGridClass } from "@/lib/card-layout";
-
-type PublicSettings = {
-  site_title: string;
-  site_description: string;
-  site_tagline: string;
-  hero_kicker: string;
-  hero_subtitle: string;
-  hero_description: string;
-  hero_actions: string;
-  hero_topics: string;
-  site_icon: string;
-  site_og_image: string;
-  author_name: string;
-  author_title: string;
-  author_bio: string;
-  author_avatar: string;
-  github_url: string;
-  twitter_url: string;
-  email: string;
-  social_links: string;
-  rss_enabled: string;
-};
+import { useSiteSettings, type PublicSiteSettings } from "@/lib/site-settings";
 
 const DEFAULT_HERO_ACTIONS: HeroAction[] = [
   { label: "最新文章", href: "#latest-posts" },
@@ -113,7 +92,7 @@ function normalizeSocialHref(link: SocialLinkConfig) {
   }
 }
 
-function getPublicSocialLinks(settings: PublicSettings | null): { id: string; icon: React.ElementType; href: string; label: string }[] {
+function getPublicSocialLinks(settings: PublicSiteSettings | null): { id: string; icon: React.ElementType; href: string; label: string }[] {
   if (!settings) return [];
 
   const configuredLinks = settings.social_links.trim() ? parseSocialLinks(settings.social_links) : [];
@@ -293,9 +272,9 @@ function SparkLine({ data, width = 240, height = 48 }: { data: number[]; width?:
 }
 
 export function HomePage() {
+  const { settings } = useSiteSettings();
   const [posts, setPosts] = useState<PostMeta[]>([]);
   const [loading, setLoading] = useState(true);
-  const [settings, setSettings] = useState<PublicSettings | null>(null);
   const [traffic, setTraffic] = useState<TrafficData | null>(null);
   const [categories, setCategories] = useState<CategoryInfo[]>([]);
 
@@ -304,11 +283,6 @@ export function HomePage() {
       .then(setPosts)
       .catch(console.error)
       .finally(() => setLoading(false));
-
-    fetch("/api/settings/public")
-      .then((r) => r.json())
-      .then((data) => setSettings(data))
-      .catch(() => {});
 
     fetch("/api/stats/traffic")
       .then((r) => r.json())
@@ -351,7 +325,7 @@ export function HomePage() {
       <SeoHead
         siteName={siteTitle}
         description={siteDescription}
-        image={settings?.site_og_image || undefined}
+        image={settings.site_og_image || undefined}
         url="/"
       />
       {/* LOCAL MOD (home-first): compact hero — posts must enter the first viewport */}

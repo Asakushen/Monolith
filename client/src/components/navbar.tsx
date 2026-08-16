@@ -8,6 +8,7 @@ import { AdminGate } from "@/components/admin-gate";
 import { SearchTrigger } from "@/components/search";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { fetchNavPages, type NavPage } from "@/lib/api";
+import { useSiteSettings } from "@/lib/site-settings";
 
 const fixedStart = [{ href: "/", label: "首页" }];
 const fixedEnd = [
@@ -22,6 +23,7 @@ export function Navbar() {
   const [open, setOpen] = useState(false);
   const [gateOpen, setGateOpen] = useState(false);
   const [navPages, setNavPages] = useState<NavPage[]>([]);
+  const { settings } = useSiteSettings();
   // LOCAL MOD: hydrate brand from localStorage cache to avoid first-paint Monolith/empty icon flash
   const [brand, setBrand] = useState(() => {
     try {
@@ -45,25 +47,25 @@ export function Navbar() {
 
   useEffect(() => {
     fetchNavPages().then(setNavPages);
-    fetch("/api/settings/public")
-      .then((r) => r.json())
-      .then((settings: { site_title?: string; site_icon?: string }) => {
-        const next = {
-          title: settings.site_title?.trim() || "浅草物语", // LOCAL MOD: default brand
-          icon: settings.site_icon?.trim() || "/favicon.png",
-        };
-        setBrand(next);
-        try {
-          localStorage.setItem(
-            "monolith_public_brand",
-            JSON.stringify({ ...next, updatedAt: Date.now() }),
-          );
-        } catch {
-          // ignore
-        }
-      })
-      .catch(() => {});
   }, []);
+
+  // LOCAL MOD: keep brand cache in sync with server settings (shared hook)
+  useEffect(() => {
+    if (!settings.site_title && !settings.site_icon) return;
+    const next = {
+      title: settings.site_title?.trim() || "浅草物语", // LOCAL MOD: default brand
+      icon: settings.site_icon?.trim() || "/favicon.png",
+    };
+    setBrand(next);
+    try {
+      localStorage.setItem(
+        "monolith_public_brand",
+        JSON.stringify({ ...next, updatedAt: Date.now() }),
+      );
+    } catch {
+      // ignore
+    }
+  }, [settings]);
 
   const navLinks = useMemo(
     () => [

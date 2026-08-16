@@ -2,24 +2,18 @@ import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import { AnimateIn } from "@/hooks/use-animate";
 import { fetchNavPages, type NavPage } from "@/lib/api";
+import { useSiteSettings } from "@/lib/site-settings";
 
 export function Footer() {
   const currentYear = new Date().getFullYear();
-  const [footerText, setFooterText] = useState("");
   const [navPages, setNavPages] = useState<NavPage[]>([]);
-
-  useEffect(() => {
-    fetch("/api/settings/public")
-      .then((r) => r.json())
-      .then((data) => setFooterText(data.footer_text || ""))
-      .catch(() => {});
-  }, []);
+  const { settings } = useSiteSettings();
 
   useEffect(() => {
     fetchNavPages().then(setNavPages);
   }, []);
 
-  const displayText = footerText || `© ${currentYear} 浅草物语. 使用 Hono + Vite 构建，部署于 Cloudflare 边缘。`; // LOCAL MOD: default brand
+  const displayText = settings.footer_text || `© ${currentYear} 浅草物语. 使用 Hono + Vite 构建，部署于 Cloudflare 边缘。`; // LOCAL MOD: default brand
 
   return (
     <footer className="app-footer mt-auto border-t border-border/40">

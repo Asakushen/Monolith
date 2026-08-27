@@ -95,7 +95,7 @@ export function AdminLayout({ children }: AdminLayoutProps) {
     <div className="space-y-[2px] border-t border-border/20 p-[12px]">
       <div className="flex min-h-[44px] items-center justify-between px-[12px] py-[8px]">
         <span className="text-[13px] font-medium text-muted-foreground/55">主题</span>
-        <ThemeToggle />
+        <ThemeToggle placement="top" />
       </div>
       <button
         onClick={handleLogout}

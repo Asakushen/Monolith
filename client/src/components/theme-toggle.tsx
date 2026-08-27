@@ -58,7 +58,11 @@ function applyTheme(mode: PaletteMode, style: ThemeStyle) {
   if (meta) meta.setAttribute("content", themeColor);
 }
 
-export function ThemeToggle() {
+export interface ThemeToggleProps {
+  placement?: "bottom" | "top";
+}
+
+export function ThemeToggle({ placement = "bottom" }: ThemeToggleProps = {}) {
   const [mode, setMode] = useState<PaletteMode>(() => {
     return (localStorage.getItem("theme") as PaletteMode) || "dark";
   });
@@ -85,7 +89,7 @@ export function ThemeToggle() {
     return () => mql.removeEventListener("change", handler);
   }, [mode, style]);
 
-  // 点击外部关闭面板
+  // 点击外部或按 ESC 键关闭面板
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent | TouchEvent) => {
@@ -93,11 +97,18 @@ export function ThemeToggle() {
         setOpen(false);
       }
     };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setOpen(false);
+      }
+    };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("touchstart", onDown);
+    document.addEventListener("keydown", onKeyDown);
     return () => {
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("touchstart", onDown);
+      document.removeEventListener("keydown", onKeyDown);
     };
   }, [open]);
 
@@ -110,13 +121,20 @@ export function ThemeToggle() {
         title="主题设置"
         aria-label="主题设置"
         aria-expanded={open}
+        aria-haspopup="true"
         className="inline-flex h-[44px] w-[44px] items-center justify-center rounded-md text-muted-foreground/55 transition-all duration-200 hover:bg-accent/30 hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:h-[32px] sm:w-[32px]"
       >
         <CurrentIcon className="h-[16px] w-[16px] transition-transform duration-300" />
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full z-[90] mt-2 w-[min(78vw,268px)] origin-top-right rounded-xl border border-border/60 bg-popover/95 p-3 shadow-2xl shadow-black/30 backdrop-blur-xl animate-scale-in">
+        <div
+          className={`absolute right-0 z-[90] w-[min(78vw,268px)] rounded-xl border border-border/60 bg-popover/95 p-3 shadow-2xl shadow-black/30 backdrop-blur-xl animate-scale-in ${
+            placement === "top"
+              ? "bottom-full mb-2 origin-bottom-right"
+              : "top-full mt-2 origin-top-right"
+          }`}
+        >
           <p className="px-1 pb-1.5 text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
             视觉风格
           </p>

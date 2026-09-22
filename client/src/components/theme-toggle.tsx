@@ -19,8 +19,8 @@ const STYLE_OPTIONS: {
   desc: string;
   icon: ComponentType<{ className?: string }>;
 }[] = [
-  { id: "default", name: "简洁", desc: "当前默认主题", icon: Palette },
-  { id: "fluid", name: "液态玻璃", desc: "流体光斑 · 玻璃质感", icon: Droplets },
+  { id: "default", name: "简洁", desc: "经典极简 · 高对比", icon: Palette },
+  { id: "fluid", name: "液态玻璃", desc: "当前默认主题", icon: Droplets },
 ];
 
 const MODE_OPTIONS: {
@@ -67,7 +67,7 @@ export function ThemeToggle({ placement = "bottom" }: ThemeToggleProps = {}) {
     return (localStorage.getItem("theme") as PaletteMode) || "dark";
   });
   const [style, setStyle] = useState<ThemeStyle>(() => {
-    return (localStorage.getItem(STYLE_KEY) as ThemeStyle) || "default";
+    return (localStorage.getItem(STYLE_KEY) as ThemeStyle) || "fluid";
   });
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);

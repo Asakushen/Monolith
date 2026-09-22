@@ -44,7 +44,7 @@
         var st = null;
         try { st = localStorage.getItem('monolith-theme-style'); } catch (e) {}
         var validStyles = ['default', 'fluid'];
-        var style = validStyles.indexOf(st) >= 0 ? st : 'default';
+        var style = validStyles.indexOf(st) >= 0 ? st : 'fluid';
         document.documentElement.setAttribute('data-style', style);
         // 同步 theme-color
         var m = document.querySelector('meta[name="theme-color"]');

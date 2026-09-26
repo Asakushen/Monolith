@@ -8,7 +8,7 @@ import {
   SNIPPET_PRESETS,
   type CustomSnippet,
 } from "@/lib/custom-injection";
-import { Save, Globe, User, Link2, ToggleLeft, ToggleRight, Code, Rss, Plus, Trash2, GripVertical, Home, Eye, Search, CheckCircle2, AlertTriangle, Clock3, Shield, Moon, Sun, Monitor, Palette, Droplets, ChevronDown, ChevronRight } from "lucide-react";
+import { Save, Globe, User, Link2, ToggleLeft, ToggleRight, Code, Rss, Plus, Trash2, GripVertical, Home, Eye, Search, CheckCircle2, AlertTriangle, Clock3, Shield, Moon, Sun, Monitor, Palette, Droplets, ChevronDown, ChevronRight, Bell, Send } from "lucide-react";
 
 type Settings = {
   site_title: string;
@@ -40,6 +40,17 @@ type Settings = {
   site_theme_mode: string;
   site_theme_style: string;
   custom_snippets: string;
+  site_origin: string;
+  webhook_urls: string;
+  resend_from: string;
+  admin_email: string;
+  jwt_session_days: string;
+  login_rate_limit: string;
+  login_rate_window_minutes: string;
+  friendlink_rate_limit: string;
+  friendlink_rate_window_hours: string;
+  guestbook_rate_limit: string;
+  guestbook_rate_window_hours: string;
 };
 
 const defaultSettings: Settings = {
@@ -80,9 +91,20 @@ const defaultSettings: Settings = {
   site_theme_mode: "dark",
   site_theme_style: "default",
   custom_snippets: "",
+  site_origin: "",
+  webhook_urls: "",
+  resend_from: "",
+  admin_email: "",
+  jwt_session_days: "7",
+  login_rate_limit: "5",
+  login_rate_window_minutes: "15",
+  friendlink_rate_limit: "3",
+  friendlink_rate_window_hours: "1",
+  guestbook_rate_limit: "5",
+  guestbook_rate_window_hours: "1",
 };
 
-type TabId = "identity" | "theme" | "home" | "profile" | "social" | "security" | "advanced";
+type TabId = "identity" | "theme" | "home" | "profile" | "social" | "notify" | "security" | "advanced";
 type TabDefinition = { id: TabId; label: string; icon: typeof Globe };
 
 const TABS: TabDefinition[] = [
@@ -91,6 +113,7 @@ const TABS: TabDefinition[] = [
   { id: "home", label: "首页呈现", icon: Home },
   { id: "profile", label: "作者名片", icon: User },
   { id: "social", label: "社交与订阅", icon: Link2 },
+  { id: "notify", label: "通知与集成", icon: Bell },
   { id: "security", label: "安全防护", icon: Shield },
   { id: "advanced", label: "发现与注入", icon: Code },
 ];
@@ -283,6 +306,9 @@ export function AdminSettings() {
   const [avatarError, setAvatarError] = useState(false);
   const [turnstileSecretOk, setTurnstileSecretOk] = useState<boolean | null>(null);
   const [expandedSnippetId, setExpandedSnippetId] = useState<string | null>(null);
+  const [integrationStatus, setIntegrationStatus] = useState<{ resendKeyConfigured: boolean; webhookConfigured: boolean; effectiveSiteOrigin: string } | null>(null);
+  const [webhookTesting, setWebhookTesting] = useState(false);
+  const [webhookResults, setWebhookResults] = useState<{ url: string; status: number; ok: boolean }[] | null>(null);
 
   useEffect(() => {
     document.title = "站点配置 | Monolith";
@@ -315,6 +341,30 @@ export function AdminSettings() {
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => setTurnstileSecretOk(data ? Boolean(data.secretConfigured) : null))
       .catch(() => setTurnstileSecretOk(null));
+    fetch("/api/admin/integration-status", {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setIntegrationStatus(data ?? null))
+      .catch(() => setIntegrationStatus(null));
+  };
+
+  const testWebhook = async () => {
+    setWebhookTesting(true);
+    setWebhookResults(null);
+    try {
+      const res = await fetch("/api/admin/test-webhook", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error || "测试失败");
+      setWebhookResults(data?.results ?? []);
+    } catch (err) {
+      showMsg(err instanceof Error ? err.message : "测试失败", "error");
+    } finally {
+      setWebhookTesting(false);
+    }
   };
 
   const showMsg = useCallback((text: string, type: "success" | "error") => {
@@ -550,6 +600,7 @@ export function AdminSettings() {
                 <p className="text-[12px] text-muted-foreground/50 mb-[16px]">这些字段会影响首页标题、浏览器标题、Open Graph、RSS 和站点页脚。</p>
                 <div className="rounded-md border border-border/20 bg-card/5 p-[16px] sm:p-[20px] space-y-[16px]">
                   <SettingField label="站点标题" value={settings.site_title} onChange={(v) => updateSetting("site_title", v)} placeholder="Monolith" hint="用于首页 H1、SEO site_name 和 RSS 标题。" />
+                  <SettingField label="站点域名 Origin" value={settings.site_origin} onChange={(v) => updateSetting("site_origin", v)} placeholder="https://example.com" mono hint={`sitemap、robots、RSS 绝对地址与邮件通知链接的基准域名；绑定自定义域名后改这里即可。留空回退部署变量（当前生效：${integrationStatus?.effectiveSiteOrigin || "请求域名"}）。`} />
                   <SettingField label="站点描述" value={settings.site_description} onChange={(v) => updateSetting("site_description", v)} placeholder="一句话描述你的博客（建议 80-160 字）" multiline hint={`${settings.site_description.length} 个字符，首页 Hero 未单独设置时也会使用它。`} />
                   <SettingField label="首页标语" value={settings.site_tagline} onChange={(v) => updateSetting("site_tagline", v)} placeholder="显示在首页首屏小标题区域" hint="作为首页副标题的回退值，适合写短句而不是长段落。" />
                   <SettingField label="站点图标 URL" value={settings.site_icon} onChange={(v) => updateSetting("site_icon", v)} placeholder="https://example.com/favicon.png" mono hint="用于浏览器 favicon 和左上角后台暗门入口，留空则使用默认图标。" />
@@ -881,6 +932,54 @@ export function AdminSettings() {
             </div>
           )}
 
+          {/* TAB: 通知与集成 */}
+          {activeTab === "notify" && (
+            <div className="space-y-[20px] animate-fade-in" role="tabpanel" id="settings-panel-notify" aria-labelledby="settings-tab-notify">
+              <div>
+                <h2 className="text-[16px] font-semibold mb-[4px]">Webhook 通知</h2>
+                <p className="text-[12px] text-muted-foreground/50 mb-[16px]">文章发布 / 更新 / 批量操作、友链申请、留言提交时向目标地址推送 JSON 事件。</p>
+                <div className="rounded-md border border-border/20 bg-card/5 p-[16px] sm:p-[20px] space-y-[14px]">
+                  <SettingField label="Webhook 目标地址" value={settings.webhook_urls} onChange={(v) => updateSetting("webhook_urls", v)} placeholder={"https://hooks.example.com/primary\nhttps://hooks.example.com/backup"} multiline mono hint="每行一个（也支持逗号分隔）；留空回退部署变量 WEBHOOK_URLS，两者皆空则不推送。" />
+                  <div className="flex flex-wrap items-center gap-[10px]">
+                    <button type="button" onClick={testWebhook} disabled={webhookTesting} className="inline-flex min-h-[36px] items-center gap-[6px] rounded-md border border-border/25 bg-background/40 px-[12px] text-[12px] font-medium text-foreground transition-colors hover:bg-accent/45 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
+                      <Send className="h-[13px] w-[13px]" />
+                      {webhookTesting ? "发送中..." : "发送测试请求"}
+                    </button>
+                    <span className="text-[11px] text-muted-foreground/35">测试读取已保存的目标地址，修改后请先保存。</span>
+                  </div>
+                  {webhookResults && (
+                    <div className="rounded-md border border-border/14 bg-background/20 px-[12px] py-[10px] space-y-[6px]">
+                      {webhookResults.map((item) => (
+                        <div key={item.url} className="flex items-center justify-between gap-[12px] text-[12px]">
+                          <span className="min-w-0 flex-1 truncate font-mono text-muted-foreground/60">{item.url}</span>
+                          <span className={`inline-flex shrink-0 items-center gap-[6px] font-mono ${item.ok ? "text-foreground/80" : "text-red-400"}`}>
+                            {item.ok ? <CheckCircle2 className="h-[13px] w-[13px]" /> : <AlertTriangle className="h-[13px] w-[13px]" />}
+                            {item.status > 0 ? `HTTP ${item.status}` : "连接失败"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <h2 className="text-[16px] font-semibold mb-[4px]">邮件通知（Resend）</h2>
+                <p className="text-[12px] text-muted-foreground/50 mb-[16px]">新评论、友链申请与审核结果通过 Resend 发送邮件提醒。</p>
+                <div className="rounded-md border border-border/20 bg-card/5 p-[16px] sm:p-[20px] space-y-[14px]">
+                  <ConfigStatusCard
+                    icon={integrationStatus?.resendKeyConfigured === false ? AlertTriangle : CheckCircle2}
+                    label="RESEND_API_KEY"
+                    value={integrationStatus === null ? "检测中" : integrationStatus.resendKeyConfigured ? "已配置" : "未配置"}
+                    detail={integrationStatus?.resendKeyConfigured ? "Workers secret 就绪，填写收发件人即可发送。" : "在仓库根目录执行 npx wrangler secret put RESEND_API_KEY --name monolith-server 完成配置。"}
+                  />
+                  <SettingField label="发件人地址" value={settings.resend_from} onChange={(v) => updateSetting("resend_from", v)} placeholder="Monolith Bot <blog@example.com>" mono hint="回退部署变量 RESEND_FROM；须为 Resend 已验证域名的地址。" />
+                  <SettingField label="管理员收件邮箱" value={settings.admin_email} onChange={(v) => updateSetting("admin_email", v)} placeholder="admin@example.com" mono hint="接收新评论与友链申请提醒；回退部署变量 ADMIN_EMAIL。" />
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* TAB: 安全防护 */}
           {activeTab === "security" && (
             <div className="space-y-[20px] animate-fade-in" role="tabpanel" id="settings-panel-security" aria-labelledby="settings-tab-security">
@@ -945,6 +1044,32 @@ export function AdminSettings() {
                       )}
                     </>
                   )}
+                </div>
+
+                <div className="rounded-md border border-border/20 bg-card/5 p-[16px] sm:p-[20px] space-y-[16px]">
+                  <div>
+                    <p className="text-[14px] font-medium text-foreground flex items-center gap-[6px]">
+                      <Clock3 className="h-[14px] w-[14px] text-foreground/60" /> 会话与防护策略
+                    </p>
+                    <p className="text-[12px] text-muted-foreground/40 mt-[4px]">调整管理会话时长与公开接口速率限制，保存后约 15 秒生效。</p>
+                  </div>
+                  <label className="block">
+                    <span className="mb-[6px] block text-[11px] font-medium uppercase tracking-normal text-muted-foreground/45">管理会话时长</span>
+                    <select value={settings.jwt_session_days} onChange={(e) => updateSetting("jwt_session_days", e.target.value)} className="settings-input h-[40px] w-full">
+                      <option value="1">1 天（高安全）</option>
+                      <option value="7">7 天（默认）</option>
+                      <option value="30">30 天（长会话）</option>
+                    </select>
+                    <span className="mt-[6px] block text-[11px] leading-[1.5] text-muted-foreground/40">重新登录后按新时长签发令牌，已签发的令牌不受影响。</span>
+                  </label>
+                  <div className="grid gap-[12px] sm:grid-cols-2">
+                    <NumberSettingField label="登录失败上限" value={settings.login_rate_limit} onChange={(v) => updateSetting("login_rate_limit", v)} min={1} max={100} suffix="次" hint={`窗口 ${settings.login_rate_window_minutes} 分钟`} />
+                    <NumberSettingField label="登录窗口时长" value={settings.login_rate_window_minutes} onChange={(v) => updateSetting("login_rate_window_minutes", v)} min={1} max={1440} suffix="分钟" hint="超过上限后锁定该 IP 的时长" />
+                    <NumberSettingField label="友链申请上限" value={settings.friendlink_rate_limit} onChange={(v) => updateSetting("friendlink_rate_limit", v)} min={1} max={100} suffix="次" hint={`窗口 ${settings.friendlink_rate_window_hours} 小时`} />
+                    <NumberSettingField label="友链申请窗口" value={settings.friendlink_rate_window_hours} onChange={(v) => updateSetting("friendlink_rate_window_hours", v)} min={1} max={720} suffix="小时" hint="默认 1 小时 3 次" />
+                    <NumberSettingField label="留言板上限" value={settings.guestbook_rate_limit} onChange={(v) => updateSetting("guestbook_rate_limit", v)} min={1} max={100} suffix="次" hint={`窗口 ${settings.guestbook_rate_window_hours} 小时`} />
+                    <NumberSettingField label="留言板窗口" value={settings.guestbook_rate_window_hours} onChange={(v) => updateSetting("guestbook_rate_window_hours", v)} min={1} max={720} suffix="小时" hint="默认 1 小时 5 次" />
+                  </div>
                 </div>
               </div>
             </div>
@@ -1197,6 +1322,21 @@ function SettingField({ label, value, onChange, placeholder, multiline, hint, mo
       ) : (
         <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className={`${inputClass} h-[40px]`} />
       )}
+      {hint ? <p className="mt-[6px] text-[11px] leading-[1.55] text-muted-foreground/35">{hint}</p> : null}
+    </div>
+  );
+}
+
+function NumberSettingField({ label, value, onChange, min, max, suffix, hint }: {
+  label: string; value: string; onChange: (v: string) => void; min: number; max: number; suffix?: string; hint?: string;
+}) {
+  return (
+    <div>
+      <label className="mb-[6px] block text-[11px] font-medium text-muted-foreground/45 uppercase tracking-normal">{label}</label>
+      <div className="relative">
+        <input type="number" min={min} max={max} value={value} onChange={(e) => onChange(e.target.value)} aria-label={label} className="settings-input h-[40px] pr-[46px] font-mono" />
+        {suffix && <span className="pointer-events-none absolute right-[10px] top-1/2 -translate-y-1/2 text-[11px] text-muted-foreground/40">{suffix}</span>}
+      </div>
       {hint ? <p className="mt-[6px] text-[11px] leading-[1.55] text-muted-foreground/35">{hint}</p> : null}
     </div>
   );

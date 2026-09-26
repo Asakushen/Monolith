@@ -93,8 +93,11 @@ app.use("*", async (c, next) => {
 
 /* ── Webhook 通知辅助函数 ──────────────────────────── */
 async function triggerWebhook(c: any, eventName: string, payload: any) {
-  if (!c.env.WEBHOOK_URLS) return;
-  const urls = c.env.WEBHOOK_URLS.split(",").map((u: string) => u.trim()).filter(Boolean);
+  let settings: Record<string, string> = {};
+  try { settings = await c.get("db")?.getSettings(); } catch { /* 通知路径容错，失败不阻断业务 */ }
+  // 控制台 webhook_urls（支持多行或逗号分隔）优先，回退部署变量
+  const raw = settings.webhook_urls?.trim() || c.env.WEBHOOK_URLS || "";
+  const urls = raw.split(/[\n,]/).map((u: string) => u.trim()).filter(Boolean);
   if (urls.length === 0) return;
 
   const data = JSON.stringify({ event: eventName, timestamp: new Date().toISOString(), payload });
@@ -115,19 +118,33 @@ function escapeEmailHtml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
 }
 
-function publicSiteOrigin(c: AppContext): string {
-  return c.env.SITE_ORIGIN || new URL(c.req.url).origin;
+/** 对外公开域名：控制台 site_origin 优先，回退部署变量，再回退请求 origin */
+function pickSiteOrigin(settings: Record<string, string>, env: Partial<Bindings>, reqUrl: string): string {
+  return (settings.site_origin?.trim() || env.SITE_ORIGIN || new URL(reqUrl).origin).replace(/\/+$/, "");
 }
 
-function sendEmail(c: AppContext, message: { to: string; subject: string; html: string }): void {
-  const { RESEND_API_KEY, RESEND_FROM } = c.env;
-  if (!RESEND_API_KEY || !RESEND_FROM || !message.to) return;
+/** 通知类配置（Resend 发件人、管理员邮箱、站点域名）：控制台设置优先，回退部署变量 */
+async function getNotificationSettings(c: AppContext): Promise<{ resendFrom: string; adminEmail: string; siteOrigin: string }> {
+  let settings: Record<string, string> = {};
+  try { settings = await c.get("db").getSettings(); } catch { /* 通知路径容错 */ }
+  return {
+    resendFrom: settings.resend_from?.trim() || c.env.RESEND_FROM || "",
+    adminEmail: settings.admin_email?.trim() || c.env.ADMIN_EMAIL || "",
+    siteOrigin: pickSiteOrigin(settings, c.env, c.req.url),
+  };
+}
 
-  const request = fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ from: RESEND_FROM, to: [message.to], subject: message.subject, html: message.html }),
-  })
+async function sendEmail(c: AppContext, message: { to: string; subject: string; html: string }): Promise<void> {
+  try {
+    if (!c.env.RESEND_API_KEY || !message.to) return;
+    const { resendFrom } = await getNotificationSettings(c);
+    if (!resendFrom) return;
+
+    const request = fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${c.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ from: resendFrom, to: [message.to], subject: message.subject, html: message.html }),
+    })
     .then((response) => {
       if (!response.ok) {
         console.error("Resend email notification failed", response.status, response.statusText);
@@ -135,37 +152,43 @@ function sendEmail(c: AppContext, message: { to: string; subject: string; html: 
     })
     .catch((error) => console.error("Resend email notification failed", error));
 
-  if (c.executionCtx?.waitUntil) c.executionCtx.waitUntil(request);
+    if (c.executionCtx?.waitUntil) c.executionCtx.waitUntil(request);
+  } catch (error) {
+    console.error("Resend email notification failed", error);
+  }
 }
 
-function notifyFriendSubmission(c: AppContext, link: FriendLink): void {
-  const adminEmail = c.env.ADMIN_EMAIL;
-  if (!adminEmail) return;
-  const origin = publicSiteOrigin(c);
-  sendEmail(c, {
-    to: adminEmail,
-    subject: `[Monolith] 新友链申请待审核: ${link.name}`,
+async function notifyFriendSubmission(c: AppContext, link: FriendLink): Promise<void> {
+  try {
+    const { adminEmail, siteOrigin } = await getNotificationSettings(c);
+    if (!adminEmail) return;
+    sendEmail(c, {
+      to: adminEmail,
+      subject: `[Monolith] 新友链申请待审核: ${link.name}`,
     html: `<p><strong>${escapeEmailHtml(link.name)}</strong> 提交了友链申请。</p>
       <p>站点：<a href="${escapeEmailHtml(link.url)}">${escapeEmailHtml(link.url)}</a></p>
       <p>简介：${escapeEmailHtml(link.description || "无")}</p>
       <p>联系人：${escapeEmailHtml(link.ownerName || "无")}；邮箱：${escapeEmailHtml(link.ownerEmail || "未填写")}</p>
-      <p><a href="${origin}/admin/friends">前往后台审核</a></p>`,
-  });
+      <p><a href="${siteOrigin}/admin/friends">前往后台审核</a></p>`,
+    });
+  } catch { /* 通知失败不影响业务 */ }
 }
 
-function notifyFriendReview(c: AppContext, link: FriendLink, approved: boolean): void {
-  if (!link.ownerEmail) return;
-  const origin = publicSiteOrigin(c);
-  const status = approved ? "已通过" : "未通过";
-  const detail = approved
-    ? `<p>你的站点现已展示在 <a href="${origin}/friends">友链页面</a>。</p>`
-    : "<p>感谢你的申请；本次暂未能收录，敬请谅解。</p>";
-  sendEmail(c, {
-    to: link.ownerEmail,
-    subject: `[Monolith] 友链申请${status}: ${link.name}`,
-    html: `<p>你好，${escapeEmailHtml(link.ownerName || link.name)}：</p>
+async function notifyFriendReview(c: AppContext, link: FriendLink, approved: boolean): Promise<void> {
+  try {
+    if (!link.ownerEmail) return;
+    const { siteOrigin } = await getNotificationSettings(c);
+    const status = approved ? "已通过" : "未通过";
+    const detail = approved
+      ? `<p>你的站点现已展示在 <a href="${siteOrigin}/friends">友链页面</a>。</p>`
+      : "<p>感谢你的申请；本次暂未能收录，敬请谅解。</p>";
+    sendEmail(c, {
+      to: link.ownerEmail,
+      subject: `[Monolith] 友链申请${status}: ${link.name}`,
+      html: `<p>你好，${escapeEmailHtml(link.ownerName || link.name)}：</p>
       <p>你提交的站点 <a href="${escapeEmailHtml(link.url)}">${escapeEmailHtml(link.name)}</a> 友链申请${status}。</p>${detail}`,
-  });
+    });
+  } catch { /* 通知失败不影响业务 */ }
 }
 
 type BackupPreviewPayload = {
@@ -475,10 +498,37 @@ app.get("/api/health", async (c) => {
 /* ── 访客埋点端点（CF 专属，AE 不可用时静默 204） ─────────── */
 // POST /api/track  body: { website?, path, referer?, screen?, language?, visitorId?, duration? }
 // 公开端点，受白名单 + Origin 校验保护，不写 D1（避免高频写穿）
+
+// 埋点配置缓存（isolate 级，短 TTL）：控制台可改采集开关与站点白名单，避免每次埋点读一次 D1
+let trackSettingsCache: { whitelist: string; enabled: boolean; fetchedAt: number } | null = null;
+const TRACK_SETTINGS_TTL = 15_000;
+
+async function getTrackSettings(db: IDatabase): Promise<{ whitelist: string; enabled: boolean }> {
+  const now = Date.now();
+  if (trackSettingsCache && now - trackSettingsCache.fetchedAt < TRACK_SETTINGS_TTL) {
+    return { whitelist: trackSettingsCache.whitelist, enabled: trackSettingsCache.enabled };
+  }
+  const settings = await db.getSettings();
+  trackSettingsCache = {
+    whitelist: settings.analytics_whitelist || "",
+    enabled: settings.ae_track_enabled !== "false",
+    fetchedAt: now,
+  };
+  return { whitelist: trackSettingsCache.whitelist, enabled: trackSettingsCache.enabled };
+}
+
 app.post("/api/track", async (c) => {
-  // 白名单校验：通过 Origin 头判断站点合法性
+  const trackSettings = await getTrackSettings(c.get("db"));
+  // 控制台关闭采集 → 静默 204，前端无感
+  if (!trackSettings.enabled) {
+    c.status(204);
+    return c.body(null);
+  }
+
+  // 白名单校验：通过 Origin 头判断站点合法性（控制台设置优先，回退部署变量）
   const origin = c.req.header("Origin") || c.req.header("Referer") || "";
-  if (!isWebsiteAllowed(origin, c.env.ANALYTICS_WEBSITE_WHITELIST)) {
+  const effectiveWhitelist = trackSettings.whitelist.trim() || c.env.ANALYTICS_WEBSITE_WHITELIST || "";
+  if (!isWebsiteAllowed(origin, effectiveWhitelist)) {
     return c.json({ error: "origin not allowed" }, 403);
   }
 
@@ -669,32 +719,17 @@ app.post("/api/posts/:slug/comments", async (c) => {
       content: body.content.trim(),
     });
     
-    // 异步触发评论提醒邮件（Resend/Webhook）
+    // 异步触发评论提醒邮件（Resend/Webhook）：收件人与发件人支持控制台配置
     const escHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    const resendKey = (c.env as any).RESEND_API_KEY;
-    const adminEmail = (c.env as any).ADMIN_EMAIL;
-    if (resendKey && adminEmail) {
-      const emailPromise = fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${resendKey}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          from: "Monolith Bot <onboarding@resend.dev>", // Resend 测试域名或需要替换为自有域名
-          to: adminEmail,
-          subject: `[Monolith] 新评论待审核: ${slug}`,
-          html: `<p><strong>${escHtml(body.authorName.trim())}</strong> 刚刚在文章 <code>${escHtml(slug)}</code> 提交了评论：</p>
-                 <blockquote style="border-left: 4px solid #eee; padding-left: 10px; color: #555;">${escHtml(body.content.trim())}</blockquote>
-                 <p>邮箱: ${escHtml(body.authorEmail?.trim() || "无")}</p>
-                 <p><a href="https://${new URL(c.req.url).hostname}/admin/comments">前往后台审核</a></p>`
-        })
-      }).catch(() => {});
-      
-      if (c.executionCtx?.waitUntil) {
-        c.executionCtx.waitUntil(emailPromise);
-      }
-    }
+    const { adminEmail, siteOrigin } = await getNotificationSettings(c);
+    await sendEmail(c, {
+      to: adminEmail,
+      subject: `[Monolith] 新评论待审核: ${slug}`,
+      html: `<p><strong>${escHtml(body.authorName.trim())}</strong> 刚刚在文章 <code>${escHtml(slug)}</code> 提交了评论：</p>
+             <blockquote style="border-left: 4px solid #eee; padding-left: 10px; color: #555;">${escHtml(body.content.trim())}</blockquote>
+             <p>邮箱: ${escHtml(body.authorEmail?.trim() || "无")}</p>
+             <p><a href="${siteOrigin}/admin/comments">前往后台审核</a></p>`,
+    });
 
     return c.json({ success: true, message: "评论已提交，等待审核" });
   } catch (err) {
@@ -721,7 +756,8 @@ app.get("/api/guestbook", async (c) => {
 // 提交留言板留言（公开接口，需审核后才显示）
 app.post("/api/guestbook", async (c) => {
   const ip = getClientIp(c);
-  if (isGuestbookRateLimited(ip, Date.now())) {
+  const rateLimits = await getRateLimitSettings(c.get("db"));
+  if (isRateLimited(guestbookAttempts, ip, Date.now(), rateLimits.guestbook)) {
     return c.json({ error: "提交过于频繁，请稍后再试" }, 429);
   }
 
@@ -856,7 +892,8 @@ app.get("/api/friends", async (c) => {
 
 app.post("/api/friends/apply", async (c) => {
   const ip = getClientIp(c);
-  if (isFriendLinkRateLimited(ip, Date.now())) {
+  const rateLimits = await getRateLimitSettings(c.get("db"));
+  if (isRateLimited(friendLinkAttempts, ip, Date.now(), rateLimits.friendLink)) {
     return c.json({ error: "提交过于频繁，请稍后再试" }, 429);
   }
 
@@ -928,7 +965,7 @@ app.get("/rss.xml", async (c) => {
   const siteDesc = settings.site_description || "";
   // Prefer public origin: /rss.xml is reverse-proxied via Pages Functions, so
   // request origin may be *.workers.dev. Keep consistent with sitemap/robots.
-  const siteUrl = c.env.SITE_ORIGIN || new URL(c.req.url).origin;
+  const siteUrl = pickSiteOrigin(settings, c.env, c.req.url);
 
   // 获取最新 20 篇文章
   const allPosts = await db.getRecentPublishedPosts(20);
@@ -965,8 +1002,8 @@ ${items}
 // sitemap.xml — 动态站点地图
 app.get("/sitemap.xml", async (c) => {
   const db = c.get("db");
-  const siteUrl = c.env.SITE_ORIGIN || new URL(c.req.url).origin;
   const settings = await db.getSettings();
+  const siteUrl = pickSiteOrigin(settings, c.env, c.req.url);
 
   const allPosts = await db.getRecentPublishedPosts(1000);
   const allPages = await db.getPublishedPages();
@@ -1050,8 +1087,8 @@ ${urls.join("\n")}
 
 // robots.txt — 爬虫规则
 app.get("/robots.txt", async (c) => {
-  const siteUrl = c.env.SITE_ORIGIN || new URL(c.req.url).origin;
   const settings = await c.get("db").getSettings();
+  const siteUrl = pickSiteOrigin(settings, c.env, c.req.url);
 
   const lines: string[] = ["User-agent: *", "Allow: /"];
   if (settings.robots_default_block !== "false") {
@@ -1072,19 +1109,52 @@ app.get("/robots.txt", async (c) => {
   });
 });
 
-/* ── 登录速率限制 ─────────────────────────── */
-const loginAttempts = new Map<string, { count: number; firstAttempt: number }>();
-const LOGIN_RATE_LIMIT = 5;       // 最多 5 次
-const LOGIN_RATE_WINDOW = 15 * 60 * 1000; // 15 分钟窗口
-const LOGIN_RATE_MAX_KEYS = 1000;
-const friendLinkAttempts = new Map<string, { count: number; firstAttempt: number }>();
-const FRIEND_LINK_RATE_LIMIT = 3;
-const FRIEND_LINK_RATE_WINDOW = 60 * 60 * 1000;
-const FRIEND_LINK_RATE_MAX_KEYS = 1000;
-const guestbookAttempts = new Map<string, { count: number; firstAttempt: number }>();
-const GUESTBOOK_RATE_LIMIT = 5;
-const GUESTBOOK_RATE_WINDOW = 60 * 60 * 1000;
-const GUESTBOOK_RATE_MAX_KEYS = 1000;
+/* ── 速率限制（控制台可配，短 TTL 缓存避免每次命中读 D1）─────────────────── */
+type AttemptRecord = { count: number; firstAttempt: number };
+const loginAttempts = new Map<string, AttemptRecord>();
+const friendLinkAttempts = new Map<string, AttemptRecord>();
+const guestbookAttempts = new Map<string, AttemptRecord>();
+const RATE_LIMIT_MAX_KEYS = 1000;
+
+function clampIntSetting(value: string | undefined, min: number, max: number, fallback: number): number {
+  const parsed = Number.parseInt(value ?? "", 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+type RateLimitRule = { limit: number; windowMs: number };
+let rateLimitSettingsCache: {
+  login: RateLimitRule;
+  friendLink: RateLimitRule;
+  guestbook: RateLimitRule;
+  fetchedAt: number;
+} | null = null;
+const RATE_LIMIT_SETTINGS_TTL = 15_000;
+
+async function getRateLimitSettings(db: IDatabase) {
+  const now = Date.now();
+  if (rateLimitSettingsCache && now - rateLimitSettingsCache.fetchedAt < RATE_LIMIT_SETTINGS_TTL) {
+    return rateLimitSettingsCache;
+  }
+  let settings: Record<string, string> = {};
+  try { settings = await db.getSettings(); } catch { /* 失败回退默认值 */ }
+  rateLimitSettingsCache = {
+    login: {
+      limit: clampIntSetting(settings.login_rate_limit, 1, 100, 5),
+      windowMs: clampIntSetting(settings.login_rate_window_minutes, 1, 1440, 15) * 60_000,
+    },
+    friendLink: {
+      limit: clampIntSetting(settings.friendlink_rate_limit, 1, 100, 3),
+      windowMs: clampIntSetting(settings.friendlink_rate_window_hours, 1, 720, 1) * 3_600_000,
+    },
+    guestbook: {
+      limit: clampIntSetting(settings.guestbook_rate_limit, 1, 100, 5),
+      windowMs: clampIntSetting(settings.guestbook_rate_window_hours, 1, 720, 1) * 3_600_000,
+    },
+    fetchedAt: now,
+  };
+  return rateLimitSettingsCache;
+}
 
 function getClientIp(c: any): string {
   const cfIp = c.req.header("CF-Connecting-IP")?.trim();
@@ -1092,61 +1162,26 @@ function getClientIp(c: any): string {
   return c.req.header("X-Forwarded-For")?.split(",")[0]?.trim() || "unknown";
 }
 
-function pruneLoginAttempts(now: number) {
-  for (const [ip, record] of loginAttempts.entries()) {
-    if ((now - record.firstAttempt) >= LOGIN_RATE_WINDOW) loginAttempts.delete(ip);
+function isRateLimited(
+  map: Map<string, AttemptRecord>,
+  ip: string,
+  now: number,
+  rule: RateLimitRule,
+): boolean {
+  for (const [key, record] of map.entries()) {
+    if ((now - record.firstAttempt) >= rule.windowMs) map.delete(key);
   }
-  while (loginAttempts.size > LOGIN_RATE_MAX_KEYS) {
-    const oldest = loginAttempts.keys().next().value;
+  while (map.size > RATE_LIMIT_MAX_KEYS) {
+    const oldest = map.keys().next().value;
     if (!oldest) break;
-    loginAttempts.delete(oldest);
+    map.delete(oldest);
   }
-}
-
-function pruneFriendLinkAttempts(now: number) {
-  for (const [ip, record] of friendLinkAttempts.entries()) {
-    if ((now - record.firstAttempt) >= FRIEND_LINK_RATE_WINDOW) friendLinkAttempts.delete(ip);
-  }
-  while (friendLinkAttempts.size > FRIEND_LINK_RATE_MAX_KEYS) {
-    const oldest = friendLinkAttempts.keys().next().value;
-    if (!oldest) break;
-    friendLinkAttempts.delete(oldest);
-  }
-}
-
-function isFriendLinkRateLimited(ip: string, now: number): boolean {
-  pruneFriendLinkAttempts(now);
-  const record = friendLinkAttempts.get(ip);
-  if (record && record.count >= FRIEND_LINK_RATE_LIMIT && (now - record.firstAttempt) < FRIEND_LINK_RATE_WINDOW) {
+  const record = map.get(ip);
+  if (record && record.count >= rule.limit && (now - record.firstAttempt) < rule.windowMs) {
     return true;
   }
-  if (!record || (now - record.firstAttempt) >= FRIEND_LINK_RATE_WINDOW) {
-    friendLinkAttempts.set(ip, { count: 1, firstAttempt: now });
-  } else {
-    record.count++;
-  }
-  return false;
-}
-
-function pruneGuestbookAttempts(now: number) {
-  for (const [ip, record] of guestbookAttempts.entries()) {
-    if ((now - record.firstAttempt) >= GUESTBOOK_RATE_WINDOW) guestbookAttempts.delete(ip);
-  }
-  while (guestbookAttempts.size > GUESTBOOK_RATE_MAX_KEYS) {
-    const oldest = guestbookAttempts.keys().next().value;
-    if (!oldest) break;
-    guestbookAttempts.delete(oldest);
-  }
-}
-
-function isGuestbookRateLimited(ip: string, now: number): boolean {
-  pruneGuestbookAttempts(now);
-  const record = guestbookAttempts.get(ip);
-  if (record && record.count >= GUESTBOOK_RATE_LIMIT && (now - record.firstAttempt) < GUESTBOOK_RATE_WINDOW) {
-    return true;
-  }
-  if (!record || (now - record.firstAttempt) >= GUESTBOOK_RATE_WINDOW) {
-    guestbookAttempts.set(ip, { count: 1, firstAttempt: now });
+  if (!record || (now - record.firstAttempt) >= rule.windowMs) {
+    map.set(ip, { count: 1, firstAttempt: now });
   } else {
     record.count++;
   }
@@ -1197,17 +1232,10 @@ app.post("/api/auth/login", async (c) => {
 
   const ip = getClientIp(c);
 
-  // 速率限制
-  const now = Date.now();
-  pruneLoginAttempts(now);
-  const record = loginAttempts.get(ip);
-  if (record && record.count >= LOGIN_RATE_LIMIT && (now - record.firstAttempt) < LOGIN_RATE_WINDOW) {
+  // 速率限制（控制台可配）
+  const rateLimits = await getRateLimitSettings(c.get("db"));
+  if (isRateLimited(loginAttempts, ip, Date.now(), rateLimits.login)) {
     return c.json({ error: "尝试次数过多，请稍后再试" }, 429);
-  }
-  if (!record || (now - record.firstAttempt) >= LOGIN_RATE_WINDOW) {
-    loginAttempts.set(ip, { count: 1, firstAttempt: now });
-  } else {
-    record.count++;
   }
 
   const parsed = await readJson<{ password: string; turnstile_token?: string }>(c);
@@ -1240,8 +1268,10 @@ app.post("/api/auth/login", async (c) => {
   loginAttempts.delete(ip);
 
   const now2 = Math.floor(Date.now() / 1000);
+  // 会话时长：控制台 jwt_session_days（1-90 天），默认 7 天
+  const sessionDays = clampIntSetting(settings.jwt_session_days, 1, 90, 7);
   const token = await sign(
-    { sub: "admin", iat: now2, exp: now2 + 60 * 60 * 24 * 7 },
+    { sub: "admin", iat: now2, exp: now2 + sessionDays * 86400 },
     c.env.JWT_SECRET,
     "HS256"
   );
@@ -1794,6 +1824,47 @@ app.put("/api/admin/settings", async (c) => {
 // Turnstile 服务端密钥配置状态（仅返回布尔值，不暴露密钥本身）
 app.get("/api/admin/turnstile-status", async (c) => {
   return c.json({ secretConfigured: typeof c.env.TURNSTILE_SECRET === "string" && c.env.TURNSTILE_SECRET.length > 0 });
+});
+
+// AE 配置状态（仅返回布尔值；凭据必须留在 Workers secret/var，不进 D1 设置）
+app.get("/api/admin/ae-status", async (c) => {
+  return c.json({
+    tokenConfigured: typeof c.env.CLOUDFLARE_API_TOKEN === "string" && c.env.CLOUDFLARE_API_TOKEN.length > 0,
+    accountConfigured: typeof c.env.CLOUDFLARE_ACCOUNT_ID === "string" && c.env.CLOUDFLARE_ACCOUNT_ID.length > 0,
+    aeBindingAvailable: Boolean(c.env.AE),
+  });
+});
+
+// Webhook 测试：向已保存的目标发送测试请求，返回各自状态码
+app.post("/api/admin/test-webhook", async (c) => {
+  let settings: Record<string, string> = {};
+  try { settings = await c.get("db").getSettings(); } catch { /* 容错 */ }
+  const raw = settings.webhook_urls?.trim() || c.env.WEBHOOK_URLS || "";
+  const urls = raw.split(/[\n,]/).map((u) => u.trim()).filter(Boolean);
+  if (urls.length === 0) return c.json({ error: "未配置 webhook 目标，请先填写并保存" }, 400);
+  const results = await Promise.all(urls.map(async (url) => {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event: "test", timestamp: new Date().toISOString(), payload: { source: "monolith-console" } }),
+      });
+      return { url, status: res.status, ok: res.ok };
+    } catch {
+      return { url, status: 0, ok: false };
+    }
+  }));
+  return c.json({ results });
+});
+
+// 集成配置状态（布尔值与生效域名；secret 留在 Workers 侧）
+app.get("/api/admin/integration-status", async (c) => {
+  const settings = await c.get("db").getSettings();
+  return c.json({
+    resendKeyConfigured: typeof c.env.RESEND_API_KEY === "string" && c.env.RESEND_API_KEY.length > 0,
+    webhookConfigured: Boolean((settings.webhook_urls?.trim() || c.env.WEBHOOK_URLS || "").trim()),
+    effectiveSiteOrigin: pickSiteOrigin(settings, c.env, c.req.url),
+  });
 });
 
 app.get("/api/admin/friends", async (c) => {

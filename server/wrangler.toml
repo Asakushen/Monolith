@@ -11,6 +11,8 @@ BLOG_NAME = "Monolith"
 SITE_ORIGIN = "https://monolith-client.pages.dev"
 # 运行时默认不做建表/补列；部署流程负责迁移与 schema reconcile。
 AUTO_SCHEMA_MIGRATION = "false"
+# AE GraphQL 查询所需的账户 ID（非敏感；查询令牌走 CLOUDFLARE_API_TOKEN secret）
+CLOUDFLARE_ACCOUNT_ID = "9d9474f286c406f50848ac46c7a15877"
 
 # D1 数据库绑定
 [[d1_databases]]

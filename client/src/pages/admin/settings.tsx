@@ -1,6 +1,14 @@
-import { useState, useEffect, useCallback, type ReactNode } from "react";
+import { useState, useEffect, useCallback, type ComponentType, type ReactNode } from "react";
 import { getToken } from "@/lib/api";
-import { Save, Globe, User, Link2, ToggleLeft, ToggleRight, Code, Rss, Plus, Trash2, GripVertical, Home, Eye, Search, CheckCircle2, AlertTriangle, Clock3 } from "lucide-react";
+import { applySiteTheme, normalizeSiteThemeMode, normalizeSiteThemeStyle, type SiteThemeMode, type SiteThemeStyle } from "@/lib/site-theme";
+import {
+  parseCustomSnippets,
+  serializeCustomSnippets,
+  legacyToSnippets,
+  SNIPPET_PRESETS,
+  type CustomSnippet,
+} from "@/lib/custom-injection";
+import { Save, Globe, User, Link2, ToggleLeft, ToggleRight, Code, Rss, Plus, Trash2, GripVertical, Home, Eye, Search, CheckCircle2, AlertTriangle, Clock3, Shield, Moon, Sun, Monitor, Palette, Droplets, ChevronDown, ChevronRight } from "lucide-react";
 
 type Settings = {
   site_title: string;
@@ -27,6 +35,11 @@ type Settings = {
   custom_footer: string;
   site_timezone: string;
   date_precision: string;
+  turnstile_enabled: string;
+  turnstile_sitekey: string;
+  site_theme_mode: string;
+  site_theme_style: string;
+  custom_snippets: string;
 };
 
 const defaultSettings: Settings = {
@@ -62,16 +75,23 @@ const defaultSettings: Settings = {
   custom_footer: "",
   site_timezone: "Asia/Shanghai",
   date_precision: "date",
+  turnstile_enabled: "false",
+  turnstile_sitekey: "",
+  site_theme_mode: "dark",
+  site_theme_style: "default",
+  custom_snippets: "",
 };
 
-type TabId = "identity" | "home" | "profile" | "social" | "advanced";
+type TabId = "identity" | "theme" | "home" | "profile" | "social" | "security" | "advanced";
 type TabDefinition = { id: TabId; label: string; icon: typeof Globe };
 
 const TABS: TabDefinition[] = [
   { id: "identity", label: "站点身份", icon: Globe },
+  { id: "theme", label: "主题外观", icon: Palette },
   { id: "home", label: "首页呈现", icon: Home },
   { id: "profile", label: "作者名片", icon: User },
   { id: "social", label: "社交与订阅", icon: Link2 },
+  { id: "security", label: "安全防护", icon: Shield },
   { id: "advanced", label: "发现与注入", icon: Code },
 ];
 
@@ -94,6 +114,26 @@ const SOCIAL_ICON_OPTIONS: { value: SocialIcon; label: string }[] = [
   { value: "x", label: "X" },
   { value: "mail", label: "邮箱" },
   { value: "rss", label: "RSS" },
+];
+
+const THEME_MODE_OPTIONS: {
+  id: SiteThemeMode;
+  name: string;
+  icon: ComponentType<{ className?: string }>;
+}[] = [
+  { id: "dark", name: "暗色", icon: Moon },
+  { id: "light", name: "亮色", icon: Sun },
+  { id: "system", name: "跟随系统", icon: Monitor },
+];
+
+const THEME_STYLE_OPTIONS: {
+  id: SiteThemeStyle;
+  name: string;
+  desc: string;
+  icon: ComponentType<{ className?: string }>;
+}[] = [
+  { id: "default", name: "简洁", desc: "当前默认主题", icon: Palette },
+  { id: "fluid", name: "液态玻璃", desc: "流体光斑 · 玻璃质感", icon: Droplets },
 ];
 
 function createSocialLink(link: Partial<SocialLinkConfig> = {}): SocialLinkConfig {
@@ -241,6 +281,8 @@ export function AdminSettings() {
   const [activeTab, setActiveTab] = useState<TabId>("identity");
   const [loadError, setLoadError] = useState("");
   const [avatarError, setAvatarError] = useState(false);
+  const [turnstileSecretOk, setTurnstileSecretOk] = useState<boolean | null>(null);
+  const [expandedSnippetId, setExpandedSnippetId] = useState<string | null>(null);
 
   useEffect(() => {
     document.title = "站点配置 | Monolith";
@@ -267,6 +309,12 @@ export function AdminSettings() {
     } finally {
       setLoading(false);
     }
+    fetch("/api/admin/turnstile-status", {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setTurnstileSecretOk(data ? Boolean(data.secretConfigured) : null))
+      .catch(() => setTurnstileSecretOk(null));
   };
 
   const showMsg = useCallback((text: string, type: "success" | "error") => {
@@ -310,10 +358,17 @@ export function AdminSettings() {
   }, [settings.author_avatar]);
 
   const rssEnabled = settings.rss_enabled !== "false";
+  const turnstileEnabled = settings.turnstile_enabled === "true";
+  const themeMode = normalizeSiteThemeMode(settings.site_theme_mode);
+  const themeStyle = normalizeSiteThemeStyle(settings.site_theme_style);
+  const customSnippets = parseCustomSnippets(settings.custom_snippets);
   const socialLinks = getSocialLinks(settings);
   const heroActions = parseHeroActions(settings.hero_actions);
   const heroTopics = parseHeroTopics(settings.hero_topics);
-  const hasThirdPartyScript = /<script/i.test(settings.custom_header) || /<script/i.test(settings.custom_footer);
+  const hasLegacyInjection = customSnippets === null && Boolean(settings.custom_header.trim() || settings.custom_footer.trim());
+  const legacyScriptInjected = /<script/i.test(settings.custom_header) || /<script/i.test(settings.custom_footer);
+  const injectedSnippetCount = (customSnippets ?? []).filter((s) => s.enabled && s.code.trim()).length;
+  const hasThirdPartyScript = customSnippets ? injectedSnippetCount > 0 : legacyScriptInjected;
 
   const updateSocialLinks = (links: SocialLinkConfig[]) => {
     setSettings((prev) => ({ ...prev, social_links: serializeSocialLinks(links) }));
@@ -359,6 +414,54 @@ export function AdminSettings() {
     updateHeroTopics([...heroTopics, { id: createStableId("hero-topic"), title: "新主题", desc: "描述这个主题对读者的价值" }]);
   };
 
+  const previewSiteTheme = (mode: SiteThemeMode, style: SiteThemeStyle) => {
+    updateSetting("site_theme_mode", mode);
+    updateSetting("site_theme_style", style);
+    applySiteTheme(mode, style);
+  };
+
+  const updateSnippet = (id: string, patch: Partial<CustomSnippet>) => {
+    setSettings((prev) => ({
+      ...prev,
+      custom_snippets: serializeCustomSnippets(
+        (parseCustomSnippets(prev.custom_snippets) ?? []).map((s) => (s.id === id ? { ...s, ...patch } : s)),
+      ),
+    }));
+  };
+
+  const addSnippetFromPreset = (preset: (typeof SNIPPET_PRESETS)[number]) => {
+    const snippet: CustomSnippet = {
+      id: createStableId("snippet"),
+      name: preset.id === "blank" ? "新片段" : preset.name,
+      position: preset.position,
+      scope: "all",
+      enabled: true,
+      requireConsent: preset.requireConsent,
+      code: preset.code,
+    };
+    setSettings((prev) => ({
+      ...prev,
+      custom_snippets: serializeCustomSnippets([...(parseCustomSnippets(prev.custom_snippets) ?? []), snippet]),
+    }));
+    setExpandedSnippetId(snippet.id);
+  };
+
+  const removeSnippet = (id: string) => {
+    setSettings((prev) => ({
+      ...prev,
+      custom_snippets: serializeCustomSnippets((parseCustomSnippets(prev.custom_snippets) ?? []).filter((s) => s.id !== id)),
+    }));
+  };
+
+  const importLegacyInjection = () => {
+    setSettings((prev) => ({
+      ...prev,
+      custom_snippets: serializeCustomSnippets(legacyToSnippets(prev.custom_header, prev.custom_footer)),
+      custom_header: "",
+      custom_footer: "",
+    }));
+  };
+
   const removeHeroTopic = (id: string) => {
     updateHeroTopics(heroTopics.filter((item) => item.id !== id));
   };
@@ -397,7 +500,7 @@ export function AdminSettings() {
       <div className="mb-[20px] grid grid-cols-1 gap-[12px] md:grid-cols-3">
         <ConfigStatusCard icon={Eye} label="前台首屏" value={settings.site_title || "未命名"} detail={settings.hero_description || settings.site_description || "尚未配置首页说明"} />
         <ConfigStatusCard icon={Search} label="SEO 摘要" value={`${settings.site_description.length}/160`} detail={settings.site_og_image ? "已配置分享图" : "建议补充社交分享图"} />
-        <ConfigStatusCard icon={hasThirdPartyScript ? AlertTriangle : CheckCircle2} label="第三方脚本" value={hasThirdPartyScript ? "已注入" : "未注入"} detail={hasThirdPartyScript ? "访客同意后加载脚本" : "当前无额外脚本风险"} />
+        <ConfigStatusCard icon={hasThirdPartyScript ? AlertTriangle : CheckCircle2} label="注入片段" value={customSnippets ? `${injectedSnippetCount}/${customSnippets.length} 启用` : hasThirdPartyScript ? "旧版已注入" : "未注入"} detail={hasThirdPartyScript ? "含外部资源的片段在访客同意后加载" : "当前无片段会向前台注入代码"} />
       </div>
 
       {loadError && (
@@ -491,6 +594,66 @@ export function AdminSettings() {
                   <p className="mt-[12px] max-w-[640px] text-[13px] leading-[1.7] text-muted-foreground/70">
                     {settings.hero_description || settings.site_description || defaultSettings.hero_description}
                   </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB: 主题外观 */}
+          {activeTab === "theme" && (
+            <div className="space-y-[20px] animate-fade-in" role="tabpanel" id="settings-panel-theme" aria-labelledby="settings-tab-theme">
+              <div>
+                <h2 className="text-[16px] font-semibold mb-[4px]">主题外观</h2>
+                <p className="text-[12px] text-muted-foreground/50 mb-[16px]">全站明暗模式与视觉风格，对前台所有访客统一生效；前台不再提供主题切换入口。</p>
+                <div className="rounded-md border border-border/20 bg-card/5 p-[16px] sm:p-[20px] space-y-[20px]">
+                  <div>
+                    <label className="mb-[6px] block text-[11px] font-medium text-muted-foreground/45 uppercase tracking-normal">明暗模式</label>
+                    <div className="grid grid-cols-3 gap-[8px]">
+                      {THEME_MODE_OPTIONS.map((option) => (
+                        <button
+                          key={option.id}
+                          type="button"
+                          onClick={() => previewSiteTheme(option.id, themeStyle)}
+                          aria-pressed={themeMode === option.id}
+                          className={`flex min-h-[44px] items-center justify-center gap-[6px] rounded-md border px-[8px] text-[13px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring ${
+                            themeMode === option.id
+                              ? "border-border bg-accent/40 text-foreground"
+                              : "border-border/50 text-muted-foreground hover:bg-accent/20"
+                          }`}
+                        >
+                          <option.icon className="h-[14px] w-[14px]" />
+                          {option.name}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="mt-[6px] text-[11px] leading-[1.55] text-muted-foreground/35">选择「跟随系统」时，按每位访客设备的系统偏好自动切换明暗。</p>
+                  </div>
+                  <div>
+                    <label className="mb-[6px] block text-[11px] font-medium text-muted-foreground/45 uppercase tracking-normal">视觉风格</label>
+                    <div className="grid grid-cols-1 gap-[8px] sm:grid-cols-2">
+                      {THEME_STYLE_OPTIONS.map((option) => (
+                        <button
+                          key={option.id}
+                          type="button"
+                          onClick={() => previewSiteTheme(themeMode, option.id)}
+                          aria-pressed={themeStyle === option.id}
+                          className={`flex min-h-[44px] items-center gap-[10px] rounded-md border px-[12px] text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring ${
+                            themeStyle === option.id
+                              ? "border-border bg-accent/40"
+                              : "border-border/50 hover:bg-accent/20"
+                          }`}
+                        >
+                          <option.icon className="h-[15px] w-[15px] shrink-0 text-muted-foreground" />
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-[13px] font-medium leading-tight text-foreground">{option.name}</span>
+                            <span className="block truncate text-[11px] text-muted-foreground">{option.desc}</span>
+                          </span>
+                          {themeStyle === option.id && <CheckCircle2 className="h-[14px] w-[14px] shrink-0 text-foreground" />}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <p className="text-[11px] leading-[1.55] text-muted-foreground/35">点击即在本页即时预览；保存后对全站生效，未保存的改动刷新后会还原。</p>
                 </div>
               </div>
             </div>
@@ -718,42 +881,253 @@ export function AdminSettings() {
             </div>
           )}
 
+          {/* TAB: 安全防护 */}
+          {activeTab === "security" && (
+            <div className="space-y-[20px] animate-fade-in" role="tabpanel" id="settings-panel-security" aria-labelledby="settings-tab-security">
+              <div>
+                <h2 className="text-[16px] font-semibold mb-[4px]">登录防护</h2>
+                <p className="text-[12px] text-muted-foreground/50 mb-[16px]">在管理登录页启用 Cloudflare Turnstile 人机验证（五秒盾），拦截自动化密码爆破。</p>
+                <div className="rounded-md border border-border/20 bg-card/5 p-[16px] sm:p-[20px] space-y-[16px]">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-[14px] font-medium text-foreground flex items-center gap-[6px]">
+                        <Shield className="h-[14px] w-[14px] text-foreground/60" /> 登录页人机验证
+                      </p>
+                      <p className="text-[12px] text-muted-foreground/40 mt-[4px]">
+                        {turnstileEnabled ? "开启状态，登录前必须通过 Cloudflare 挑战" : "已关闭，仅保留基础速率限制（每 IP 15 分钟 5 次）"}
+                      </p>
+                    </div>
+                    <button onClick={() => updateSetting("turnstile_enabled", turnstileEnabled ? "false" : "true")}
+                      className="inline-flex items-center transition-opacity hover:opacity-80"
+                      aria-label={turnstileEnabled ? "关闭登录人机验证" : "开启登录人机验证"}
+                    >
+                      {turnstileEnabled ? (
+                        <ToggleRight className="h-[32px] w-[32px] text-foreground/75" />
+                      ) : (
+                        <ToggleLeft className="h-[32px] w-[32px] text-muted-foreground/20" />
+                      )}
+                    </button>
+                  </div>
+
+                  {turnstileEnabled && (
+                    <>
+                      <SettingField
+                        label="Turnstile Site Key"
+                        value={settings.turnstile_sitekey}
+                        onChange={(v) => updateSetting("turnstile_sitekey", v)}
+                        placeholder="0x4AAAAAAA..."
+                        mono
+                        hint="在 Cloudflare Dashboard → Turnstile 创建站点后获取，属于公开密钥，可安全保存在站点设置中。"
+                      />
+                      <div className="grid gap-[12px] sm:grid-cols-2">
+                        <ConfigStatusCard
+                          icon={turnstileSecretOk === false ? AlertTriangle : CheckCircle2}
+                          label="服务端密钥 TURNSTILE_SECRET"
+                          value={turnstileSecretOk === null ? "检测中" : turnstileSecretOk ? "已配置" : "未配置"}
+                          detail={turnstileSecretOk ? "Workers 已持有服务端校验密钥，令牌验证可用。" : "在仓库根目录执行 npx wrangler secret put TURNSTILE_SECRET --name monolith-server 完成配置。"}
+                        />
+                        <ConfigStatusCard
+                          icon={settings.turnstile_sitekey.trim() ? CheckCircle2 : AlertTriangle}
+                          label="Turnstile Site Key"
+                          value={settings.turnstile_sitekey.trim() ? "已填写" : "未填写"}
+                          detail={settings.turnstile_sitekey.trim() ? "保存后登录页将渲染人机验证组件。" : "缺少 Site Key 时人机验证不会生效。"}
+                        />
+                      </div>
+                      {(!settings.turnstile_sitekey.trim() || turnstileSecretOk === false) && (
+                        <div className="flex gap-[8px] rounded-md border border-amber-500/20 bg-amber-500/5 px-[12px] py-[10px] text-[11px] leading-[1.6] text-amber-400/80">
+                          <AlertTriangle className="mt-[1px] h-[13px] w-[13px] shrink-0" />
+                          <span>
+                            开启前需完成两项配置：在 Cloudflare Dashboard → Turnstile 创建站点拿到 Site Key 与 Secret Key；Site Key 填写在上方输入框，Secret Key 通过
+                            <code className="mx-[4px] rounded bg-amber-500/10 px-[4px] py-[1px] font-mono">npx wrangler secret put TURNSTILE_SECRET --name monolith-server</code>
+                            写入 Workers。任一项缺失时，登录页不会强制人机验证。
+                          </span>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* TAB: 扩展与注入 */}
           {activeTab === "advanced" && (
-            <div className="space-y-[24px] animate-fade-in" role="tabpanel" id="settings-panel-advanced" aria-labelledby="settings-tab-advanced">
+            <div className="space-y-[20px] animate-fade-in" role="tabpanel" id="settings-panel-advanced" aria-labelledby="settings-tab-advanced">
               <div>
                 <h2 className="text-[16px] font-semibold mb-[4px] flex items-center gap-[6px]">
                   危险操作区 <span className="text-[10px] px-[6px] py-[2px] rounded-md bg-amber-500/10 text-amber-500 border border-amber-500/20 font-mono">Expert</span>
                 </h2>
-                <p className="text-[12px] text-muted-foreground/50 mb-[16px]">向站点核心区域注入自定义脚本或标签。错误的语法可能导致前端崩溃。</p>
+                <p className="text-[12px] text-muted-foreground/50 mb-[16px]">以片段方式向站点注入统计、验证或自定义代码，可独立控制位置、作用域与同意策略。</p>
                 <div className="mb-[16px] flex gap-[8px] rounded-md border border-amber-500/20 bg-amber-500/5 px-[12px] py-[10px] text-[11px] leading-[1.6] text-amber-400/80">
                   <AlertTriangle className="mt-[1px] h-[13px] w-[13px] shrink-0" />
-                  <span>隐私提醒：注入的分析脚本会在访客浏览器中执行。Monolith 内置同意机制，访客接受后才会加载第三方脚本。</span>
+                  <span>隐私与安全：片段会在访客浏览器中执行。仅允许带 src 的外部脚本（透传 data-* 属性）与 meta/link 等标签，内联脚本与 iframe 会被过滤；开启「需访客同意」的片段只在访客接受 Cookie 后加载。</span>
                 </div>
-                <div className="rounded-md border border-border/20 bg-card/5 p-[16px] sm:p-[20px] space-y-[20px]">
-                  <div>
-                    <label className="mb-[6px] block text-[11px] font-bold text-amber-500/70 uppercase tracking-normal">&lt;head&gt; 注入区域</label>
-                    <p className="text-[11px] text-muted-foreground/30 mb-[10px]">适用于统计服务 (Analytics)、搜索引擎持有权验证 (SEO 元标签) 以及全局 CSS 覆盖。</p>
-                    <textarea
-                      value={settings.custom_header}
-                      onChange={(e) => setSettings({ ...settings, custom_header: e.target.value })}
-                      placeholder={"<!-- Google tag (gtag.js) -->\n<script async src=\"...\"></script>"}
-                      rows={5}
-                      className="settings-input min-h-[132px] resize-y py-[12px] font-mono text-[12px] leading-[1.6]"
-                    />
+
+                {hasLegacyInjection && (
+                  <div className="mb-[16px] flex flex-col gap-[10px] rounded-md border border-border/20 bg-card/5 px-[14px] py-[12px] sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <p className="text-[13px] font-medium text-foreground">检测到旧版注入代码</p>
+                      <p className="mt-[4px] text-[12px] leading-[1.5] text-muted-foreground/45">可一键迁移为片段以获得独立开关与作用域控制；迁移并保存后旧字段会被清空。</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={importLegacyInjection}
+                      className="inline-flex min-h-[44px] shrink-0 items-center justify-center rounded-md border border-border/25 bg-background/40 px-[14px] text-[13px] font-medium text-foreground transition-colors hover:bg-accent/45 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                    >
+                      导入为片段
+                    </button>
                   </div>
-                  <div>
-                    <label className="mb-[6px] block text-[11px] font-bold text-amber-500/70 uppercase tracking-normal">&lt;/body&gt; 前方注入</label>
-                    <p className="text-[11px] text-muted-foreground/30 mb-[10px]">位于文档末尾，主要用于非阻塞广告联盟脚本、客服悬浮窗或第三方交互集成。</p>
-                    <textarea
-                      value={settings.custom_footer}
-                      onChange={(e) => setSettings({ ...settings, custom_footer: e.target.value })}
-                      placeholder={"<script>\n  console.log('Hello from footer!');\n</script>"}
-                      rows={5}
-                      className="settings-input min-h-[132px] resize-y py-[12px] font-mono text-[12px] leading-[1.6]"
-                    />
+                )}
+
+                <section className="rounded-md border border-border/20 bg-card/5 p-[14px] sm:p-[20px]">
+                  <div className="mb-[14px] flex flex-col gap-[12px]">
+                    <div>
+                      <h3 className="text-[14px] font-semibold text-foreground">注入片段</h3>
+                      <p className="mt-[4px] text-[12px] text-muted-foreground/50">从模板快速创建，或添加空白片段自行编写；占位符 REPLACE_* 需替换为真实值。</p>
+                    </div>
+                    <div className="flex flex-wrap gap-[8px]">
+                      {SNIPPET_PRESETS.map((preset) => (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          onClick={() => addSnippetFromPreset(preset)}
+                          title={preset.desc}
+                          className="inline-flex min-h-[36px] items-center gap-[6px] rounded-md border border-border/25 bg-background/35 px-[12px] text-[12px] font-medium text-foreground transition-all hover:-translate-y-[2px] hover:bg-card/25 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                        >
+                          <Plus className="h-[13px] w-[13px]" />
+                          {preset.id === "blank" ? "空白片段" : preset.name}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
+
+                  <div className="space-y-[10px]">
+                    {(customSnippets ?? []).length > 0 ? (
+                      (customSnippets ?? []).map((snippet) => (
+                        <div key={snippet.id} className="rounded-lg border border-border/15 bg-background/25 p-[12px] space-y-[10px]">
+                          <div className="grid gap-[10px] md:grid-cols-[minmax(150px,1fr)_132px_132px_44px_44px] md:items-center">
+                            <label className="block">
+                              <span className="mb-[6px] block text-[11px] font-medium uppercase tracking-normal text-muted-foreground/40 md:sr-only">名称</span>
+                              <input
+                                value={snippet.name}
+                                onChange={(e) => updateSnippet(snippet.id, { name: e.target.value })}
+                                placeholder="片段名称，如 Cloudflare 分析"
+                                className="settings-input h-[40px]"
+                              />
+                            </label>
+                            <label className="block">
+                              <span className="mb-[6px] block text-[11px] font-medium uppercase tracking-normal text-muted-foreground/40 md:sr-only">位置</span>
+                              <select
+                                value={snippet.position}
+                                onChange={(e) => updateSnippet(snippet.id, { position: e.target.value as CustomSnippet["position"] })}
+                                aria-label="注入位置"
+                                className="settings-input h-[40px]"
+                              >
+                                <option value="head">&lt;head&gt; 内</option>
+                                <option value="body-end">&lt;/body&gt; 前</option>
+                              </select>
+                            </label>
+                            <label className="block">
+                              <span className="mb-[6px] block text-[11px] font-medium uppercase tracking-normal text-muted-foreground/40 md:sr-only">作用域</span>
+                              <select
+                                value={snippet.scope}
+                                onChange={(e) => updateSnippet(snippet.id, { scope: e.target.value as CustomSnippet["scope"] })}
+                                aria-label="作用域"
+                                className="settings-input h-[40px]"
+                              >
+                                <option value="all">全站</option>
+                                <option value="home">仅首页</option>
+                                <option value="post">仅文章页</option>
+                                <option value="archive">仅归档</option>
+                                <option value="path">指定路径</option>
+                              </select>
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => updateSnippet(snippet.id, { enabled: !snippet.enabled })}
+                              aria-label={snippet.enabled ? `停用 ${snippet.name || "片段"}` : `启用 ${snippet.name || "片段"}`}
+                              className="inline-flex min-h-[44px] items-center justify-center rounded-lg border border-border/15 bg-background/25 text-muted-foreground transition-colors hover:bg-accent/45 hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                            >
+                              {snippet.enabled ? (
+                                <ToggleRight className="h-[28px] w-[28px] text-foreground/75" />
+                              ) : (
+                                <ToggleLeft className="h-[28px] w-[28px] text-muted-foreground/30" />
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => removeSnippet(snippet.id)}
+                              aria-label={`删除 ${snippet.name || "片段"}`}
+                              className="inline-flex min-h-[44px] items-center justify-center rounded-lg border border-border/15 bg-background/25 text-muted-foreground/50 transition-colors hover:bg-red-500/10 hover:text-red-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                            >
+                              <Trash2 className="h-[15px] w-[15px]" />
+                            </button>
+                          </div>
+
+                          {snippet.scope === "path" && (
+                            <label className="block">
+                              <span className="mb-[6px] block text-[11px] font-medium uppercase tracking-normal text-muted-foreground/40">路径前缀</span>
+                              <input
+                                value={snippet.pathPrefix ?? ""}
+                                onChange={(e) => updateSnippet(snippet.id, { pathPrefix: e.target.value })}
+                                placeholder="/friends 或 /docs"
+                                className="settings-input h-[40px] font-mono text-[12px]"
+                              />
+                              <span className="mt-[6px] block text-[11px] leading-[1.5] text-muted-foreground/40">匹配该前缀下的所有路由，如 /docs 匹配 /docs/a/b。</span>
+                            </label>
+                          )}
+
+                          <div className="flex flex-wrap items-center justify-between gap-[10px]">
+                            <button
+                              type="button"
+                              onClick={() => updateSnippet(snippet.id, { requireConsent: !snippet.requireConsent })}
+                              aria-pressed={snippet.requireConsent}
+                              className="inline-flex min-h-[36px] items-center gap-[6px] rounded-md border border-border/15 bg-background/25 px-[10px] text-[12px] text-muted-foreground transition-colors hover:bg-accent/45 hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                            >
+                              {snippet.requireConsent ? (
+                                <ToggleRight className="h-[20px] w-[20px] text-foreground/75" />
+                              ) : (
+                                <ToggleLeft className="h-[20px] w-[20px] text-muted-foreground/35" />
+                              )}
+                              需访客同意后加载
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setExpandedSnippetId(expandedSnippetId === snippet.id ? null : snippet.id)}
+                              aria-expanded={expandedSnippetId === snippet.id}
+                              className="inline-flex min-h-[36px] items-center gap-[4px] rounded-md px-[8px] text-[12px] text-muted-foreground/60 transition-colors hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                            >
+                              {expandedSnippetId === snippet.id ? (
+                                <ChevronDown className="h-[14px] w-[14px]" />
+                              ) : (
+                                <ChevronRight className="h-[14px] w-[14px]" />
+                              )}
+                              代码
+                            </button>
+                          </div>
+
+                          {expandedSnippetId === snippet.id && (
+                            <div>
+                              <textarea
+                                value={snippet.code}
+                                onChange={(e) => updateSnippet(snippet.id, { code: e.target.value })}
+                                placeholder={'<script defer src="https://analytics.example/script.js" data-website-id="..."></script>'}
+                                rows={6}
+                                className="settings-input min-h-[140px] resize-y py-[12px] font-mono text-[12px] leading-[1.6]"
+                              />
+                              <p className="mt-[6px] text-[11px] leading-[1.55] text-muted-foreground/35">仅支持外部脚本（src、async、defer、data-*、crossorigin）与 meta/link 等标签；内联脚本、style、iframe、form 会被过滤。</p>
+                            </div>
+                          )}
+                        </div>
+                      ))
+                    ) : (
+                      <div className="rounded-lg border border-dashed border-border/20 px-[18px] py-[28px] text-center">
+                        <p className="text-[13px] font-medium text-foreground/80">还没有注入片段</p>
+                        <p className="mt-[6px] text-[12px] text-muted-foreground/45">从上方模板创建统计、验证类片段，或添加空白片段。</p>
+                      </div>
+                    )}
+                  </div>
+                </section>
               </div>
             </div>
           )}

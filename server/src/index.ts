@@ -23,6 +23,7 @@ type Bindings = {
   ADMIN_PASSWORD: string;
   JWT_SECRET: string;
   REACTION_SALT?: string;
+  TURNSTILE_SECRET?: string; // Cloudflare Turnstile 服务端校验密钥（登录防爆破）
   DB_PROVIDER?: string;
   AUTO_SCHEMA_MIGRATION?: string;
   STORAGE_PROVIDER?: string;
@@ -826,6 +827,11 @@ app.get("/api/settings/public", async (c) => {
     date_precision: all.date_precision === "datetime_seconds"
       ? "datetime_seconds"
       : all.date_precision === "datetime" ? "datetime" : "date",
+    turnstile_enabled: all.turnstile_enabled === "true" ? "true" : "false",
+    turnstile_sitekey: all.turnstile_sitekey || "",
+    site_theme_mode: all.site_theme_mode === "light" || all.site_theme_mode === "system" ? all.site_theme_mode : "dark",
+    site_theme_style: all.site_theme_style === "fluid" ? "fluid" : "default",
+    custom_snippets: all.custom_snippets || "",
   });
 });
 
@@ -960,6 +966,7 @@ ${items}
 app.get("/sitemap.xml", async (c) => {
   const db = c.get("db");
   const siteUrl = c.env.SITE_ORIGIN || new URL(c.req.url).origin;
+  const settings = await db.getSettings();
 
   const allPosts = await db.getRecentPublishedPosts(1000);
   const allPages = await db.getPublishedPages();
@@ -968,6 +975,7 @@ app.get("/sitemap.xml", async (c) => {
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
   const urls: string[] = [];
+  const seenLocs = new Set<string>([`${siteUrl}/`]);
 
   // 首页
   urls.push(`  <url>
@@ -976,12 +984,15 @@ app.get("/sitemap.xml", async (c) => {
     <priority>1.0</priority>
   </url>`);
 
-  // 归档页
-  urls.push(`  <url>
+  // 归档页（控制台可关）
+  if (settings.sitemap_include_archive !== "false") {
+    urls.push(`  <url>
     <loc>${escXml(siteUrl)}/archive</loc>
     <changefreq>weekly</changefreq>
     <priority>0.7</priority>
   </url>`);
+    seenLocs.add(`${siteUrl}/archive`);
+  }
 
   // 文章
   for (const post of allPosts) {
@@ -991,12 +1002,37 @@ app.get("/sitemap.xml", async (c) => {
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>`);
+    seenLocs.add(`${siteUrl}/posts/${post.slug}`);
   }
 
   // 独立页面 — frontend route is /page/:slug (see client/src/app.tsx)
   for (const page of allPages) {
     urls.push(`  <url>
     <loc>${escXml(siteUrl)}/page/${escXml(page.slug)}</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
+  </url>`);
+    seenLocs.add(`${siteUrl}/page/${page.slug}`);
+  }
+
+  // 额外 URL（控制台配置；支持绝对地址或以 / 开头的相对路径）
+  for (const raw of (settings.sitemap_extra_urls || "").split(/\r?\n/)) {
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    // URL 内不允许出现空白、反斜杠或引号等非法字符
+    if (/[\s"'<>\\]/.test(trimmed)) continue;
+    const absolute = /^https?:\/\//i.test(trimmed)
+      ? trimmed
+      : `${siteUrl}/${trimmed.replace(/^\/+/, "")}`;
+    try {
+      new URL(absolute);
+    } catch {
+      continue;
+    }
+    if (seenLocs.has(absolute)) continue;
+    seenLocs.add(absolute);
+    urls.push(`  <url>
+    <loc>${escXml(absolute)}</loc>
     <changefreq>monthly</changefreq>
     <priority>0.5</priority>
   </url>`);
@@ -1013,16 +1049,25 @@ ${urls.join("\n")}
 });
 
 // robots.txt — 爬虫规则
-app.get("/robots.txt", (c) => {
+app.get("/robots.txt", async (c) => {
   const siteUrl = c.env.SITE_ORIGIN || new URL(c.req.url).origin;
-  const txt = `User-agent: *
-Allow: /
-Disallow: /admin
-Disallow: /api/admin
+  const settings = await c.get("db").getSettings();
 
-Sitemap: ${siteUrl}/sitemap.xml
-`;
-  return new Response(txt, {
+  const lines: string[] = ["User-agent: *", "Allow: /"];
+  if (settings.robots_default_block !== "false") {
+    lines.push("Disallow: /admin", "Disallow: /api/admin");
+  }
+  // 自定义规则：逐行白名单校验，仅放行常见指令与注释行
+  const allowedRule = /^(User-agent|Allow|Disallow|Crawl-delay|Sitemap):/i;
+  for (const raw of (settings.robots_extra_rules || "").split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    if (!allowedRule.test(line)) continue;
+    lines.push(line);
+  }
+  lines.push("", `Sitemap: ${siteUrl}/sitemap.xml`);
+
+  return new Response(`${lines.join("\n")}\n`, {
     headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "public, max-age=86400" },
   });
 });
@@ -1115,6 +1160,28 @@ function getMissingAuthSecrets(env: Partial<Bindings>) {
   ].filter(([, value]) => typeof value !== "string" || value.length === 0).map(([key]) => key);
 }
 
+/* ── Cloudflare Turnstile（登录人机验证）──── */
+
+const TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
+
+async function verifyTurnstileToken(token: string, secret: string, ip: string): Promise<boolean> {
+  try {
+    const form = new URLSearchParams({ secret, response: token });
+    if (ip && ip !== "unknown") form.set("remoteip", ip);
+    const res = await fetch(TURNSTILE_VERIFY_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: form.toString(),
+    });
+    if (!res.ok) return false;
+    const data = await res.json() as { success?: boolean };
+    return data.success === true;
+  } catch {
+    // 校验服务不可达时按失败处理，避免防护被网络错误绕过
+    return false;
+  }
+}
+
 /* ── 认证 API ──────────────────────────────── */
 
 // 登录
@@ -1143,9 +1210,28 @@ app.post("/api/auth/login", async (c) => {
     record.count++;
   }
 
-  const parsed = await readJson<{ password: string }>(c);
+  const parsed = await readJson<{ password: string; turnstile_token?: string }>(c);
   if (!parsed.ok) return parsed.response;
   const body = parsed.body;
+
+  // Cloudflare Turnstile 人机验证：控制台开启且已填写 Site Key 时生效
+  const settings = await c.get("db").getSettings();
+  if (settings.turnstile_enabled === "true" && settings.turnstile_sitekey?.trim()) {
+    if (!c.env.TURNSTILE_SECRET) {
+      return c.json({
+        error: "已开启登录人机验证，但 Workers 未配置 TURNSTILE_SECRET。请执行 npx wrangler secret put TURNSTILE_SECRET --name monolith-server 后重试。",
+        code: "turnstile_secret_missing",
+      }, 503);
+    }
+    if (!body.turnstile_token) {
+      return c.json({ error: "请先完成人机验证", code: "turnstile_required" }, 400);
+    }
+    const verified = await verifyTurnstileToken(body.turnstile_token, c.env.TURNSTILE_SECRET, ip);
+    if (!verified) {
+      return c.json({ error: "人机验证未通过，请重试", code: "turnstile_invalid" }, 403);
+    }
+  }
+
   if (!body.password || body.password !== c.env.ADMIN_PASSWORD) {
     return c.json({ error: "密码错误" }, 401);
   }
@@ -1703,6 +1789,11 @@ app.put("/api/admin/settings", async (c) => {
   if (!parsed.ok) return parsed.response;
   await db.saveSettings(normalizeSettings(parsed.body) || {});
   return c.json({ success: true });
+});
+
+// Turnstile 服务端密钥配置状态（仅返回布尔值，不暴露密钥本身）
+app.get("/api/admin/turnstile-status", async (c) => {
+  return c.json({ secretConfigured: typeof c.env.TURNSTILE_SECRET === "string" && c.env.TURNSTILE_SECRET.length > 0 });
 });
 
 app.get("/api/admin/friends", async (c) => {

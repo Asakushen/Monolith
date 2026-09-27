@@ -70,8 +70,7 @@
 - **隐私优先** — Cookie 同意横幅，第三方脚本按片段门控，GDPR 数据导出
 - **多端备份** — JSON / R2-S3 / WebDAV 自由切换
 
-### 🤖 智能扩展
-- **MCP 工具链** — 配套 [Monolith-MCP](https://github.com/one-ea/Monolith-MCP)，让 AI 助手代为写稿、审评、备份
+### 🔍 SEO 与洞察
 - **SEO 友好** — sitemap、RSS 2.0、JSON-LD、OG/Twitter Card
 - **数据洞察** — 浏览量、14 日趋势、热门 Top 10
 
@@ -106,7 +105,6 @@
 | 前端 | React SPA + Pages Functions | `client/src` · `client/functions` |
 | 后端 | Hono Workers + Storage Factory | `server/src/index.ts` · `server/src/storage` |
 | 持久层 | D1 / Turso / PostgreSQL · R2 / S3 | `server/src/storage/db` · `server/src/storage/object` |
-| 智能层 | Monolith-MCP（独立仓库） | [one-ea/Monolith-MCP](https://github.com/one-ea/Monolith-MCP) |
 
 **关键设计决策**
 

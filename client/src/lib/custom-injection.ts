@@ -29,12 +29,13 @@ function sanitizeCustomHtml(html: string) {
 }
 
 /** 将片段代码安全注入容器：仅允许带 src 的外部脚本，透传 async、defer、data- 属性与 crossorigin */
-function injectHtml(container: HTMLElement, html: string) {
+function injectHtml(container: HTMLElement, html: string, skipScripts = false) {
   const temp = document.createElement("div");
   temp.innerHTML = sanitizeCustomHtml(html);
   Array.from(temp.childNodes).forEach((node) => {
     if (node instanceof HTMLScriptElement) {
       if (!node.src) return; // 禁止内联脚本，只允许带 src 的外部脚本
+      if (skipScripts) return; // 已执行过的脚本不再重复注入（SPA 路由切换防重复计数）
       const script = document.createElement("script");
       script.src = node.src;
       if (node.async) script.async = true;
@@ -153,21 +154,29 @@ export function removeCustomInjection() {
   document.querySelectorAll(`[${CUSTOM_INJECTION_ATTR}="true"]`).forEach((node) => node.remove());
 }
 
+// 外部脚本按片段只执行一次：SPA 路由切换触发的重复注入跳过脚本节点，避免统计类脚本重复计数
+const executedSnippetScriptIds = new Set<string>();
+
 /** 注入单个片段；返回是否实际写入 */
 function injectSnippet(snippet: CustomSnippet): boolean {
   if (!snippet.code.trim()) return false;
   const container = document.createElement("div");
   container.id = `monolith-snippet-${snippet.id}`;
   container.dataset.monolithCustomInjection = "true";
-  injectHtml(container, snippet.code);
+  const scriptsDone = executedSnippetScriptIds.has(snippet.id);
+  injectHtml(container, snippet.code, scriptsDone);
+  const hasScripts = container.querySelector("script") !== null;
   if (snippet.position === "head") {
+    // head 内只注入 Element 节点（meta/link/script 等），文本节点属非法内容且无法打清理标记
     Array.from(container.childNodes).forEach((node) => {
-      if (node instanceof HTMLElement) node.dataset.monolithCustomInjection = "true";
+      if (!(node instanceof HTMLElement)) return;
+      node.dataset.monolithCustomInjection = "true";
       document.head.appendChild(node);
     });
   } else {
     document.body.appendChild(container);
   }
+  if (!scriptsDone && hasScripts) executedSnippetScriptIds.add(snippet.id);
   return true;
 }
 

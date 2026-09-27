@@ -121,23 +121,26 @@ export function SiteSettingsProvider({ children }: { children: ReactNode }) {
     ready,
   }), [ready, settings]);
 
-  // 公共设置就绪后应用全站主题（控制台「主题外观」的站点级设置）
+  // 公共设置就绪后应用全站主题（控制台「主题外观」的站点级设置）。
+  // ready 前不动作：保持 index.html 内联脚本按 cookie 设置的初始主题，避免默认暗色闪变。
   useEffect(() => {
+    if (!ready) return;
     applySiteTheme(
       normalizeSiteThemeMode(settings.site_theme_mode),
       normalizeSiteThemeStyle(settings.site_theme_style),
     );
-  }, [settings.site_theme_mode, settings.site_theme_style]);
+  }, [ready, settings.site_theme_mode, settings.site_theme_style]);
 
   // system 模式下跟随系统明暗变化
   useEffect(() => {
+    if (!ready) return;
     if (normalizeSiteThemeMode(settings.site_theme_mode) !== "system") return;
     const style = normalizeSiteThemeStyle(settings.site_theme_style);
     const mql = window.matchMedia("(prefers-color-scheme: dark)");
     const handler = () => applySiteTheme("system", style);
     mql.addEventListener("change", handler);
     return () => mql.removeEventListener("change", handler);
-  }, [settings.site_theme_mode, settings.site_theme_style]);
+  }, [ready, settings.site_theme_mode, settings.site_theme_style]);
 
   return <SiteSettingsContext.Provider value={value}>{children}</SiteSettingsContext.Provider>;
 }

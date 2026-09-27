@@ -91,6 +91,8 @@ reviews:
       instructions: "当 PR 标题或描述包含 fix/bugfix/修复 关键词时应用此标签"
     - label: "feature"
       instructions: "当 PR 标题或描述包含 feat/feature/新增 关键词时应用此标签"
+    - label: "security"
+      instructions: "当 PR 修改认证、鉴权、secret 处理、Turnstile、速率限制或 CORS 相关代码时应用此标签"
 
   # ── 文件过滤 ──
   path_filters:
@@ -100,18 +102,51 @@ reviews:
     - "!**/build/**"
     - "!**/.wrangler/**"
     - "!**/package-lock.json"
-    # 排除迁移文件（自动生成）
-    - "!server/src/db/migrations/**"
+    # 排除工具与本地上下文产物（不属于业务审查范围）
+    - "!skills-lock.json"
+    - "!.claude/**"
+    - "!.codex/**"
+    # 排除临时脚本与测试输出（AGENTS.md 约定目录）
+    - "!tmp/**"
+    - "!tests/output/**"
+    # 排除数据库迁移文件（由 drizzle 工具链生成，schema 一致性走 drizzle-sync-check 流程）
+    - "!server/src/migrations/**"
+    # 排除二进制资源（审查无意义）
+    - "!**/*.png"
+    - "!**/*.jpg"
+    - "!**/*.webp"
+    - "!**/*.ttf"
+    - "!**/*.woff"
+    - "!**/*.woff2"
 
   # ── 路径级审查指令 ──
   path_instructions:
+    # 全局规则：适用于所有路径
+    - path: "**"
+      instructions: >
+        Monolith 是部署在 Cloudflare Workers/Pages 的全栈边缘博客（React 19 + Hono + D1/R2/Turso/PostgreSQL）。全局审查红线：
+        1. 密码、token、cookie、私钥、连接串等真实 secret 不得写入代码、配置、迁移、种子或日志输出；发现即标记为严重问题。
+        2. SQL 必须参数化，禁止字符串拼接查询。
+        3. Cloudflare Workers 环境不得引入 Node 原生模块。
+        4. 行为配置应进 D1 settings 键值（控制台可管理）；Workers env/secret 仅放凭据与基础设施拓扑，新增 env 变量需说明为何不能进控制台设置。
+        5. 数据库 schema、查询语义变化必须同步 D1/Turso/PostgreSQL 三个适配器以及 R2/S3 抽象，单适配器改动需标记提醒。
+        6. 独立 IO 应并发处理（Promise.all）；提交信息遵循 Conventional Commits。
+
     - path: "client/src/components/**"
       instructions: >
         这是 React 前端组件目录。审查时请关注：
         1. 是否同时兼容暗色和亮色主题（检查 CSS 变量和 data-theme）
-        2. 响应式布局是否完整（移动端/平板/桌面端）
+        2. 响应式布局是否完整（375px / 768px / 1440px 三档，无横向滚动，触控目标 ≥44px）
         3. 无障碍访问（aria 标签、键盘导航）
-        4. 组件是否保持单一职责
+        4. 组件是否保持单一职责；禁止全局 zoom
+
+    - path: "client/src/lib/**"
+      instructions: >
+        前端核心逻辑库（API 客户端、站点设置、主题、注入引擎、SEO 分析）。审查时请重点关注：
+        1. custom-injection.ts 是安全边界：仅允许带 src 的外部脚本（透传 data-*/crossorigin），内联脚本与 style/iframe/form 必须被过滤；外部脚本按片段只能执行一次（SPA 路由切换不得重复执行统计脚本）
+        2. site-theme.ts 与 index.html 内联脚本的主题解析逻辑必须保持一致（cookie 格式 mode|style + 白名单校验）；设置加载完成（ready）前不得用默认主题覆盖内联脚本的初始值
+        3. api.ts 的错误处理需透传服务端错误码与消息（如 turnstile_required、429 限速）
+        4. effect 依赖数组：涉及 location/settings 的 effect 需检查重复执行的副作用
 
     - path: "client/src/pages/**"
       instructions: >
@@ -119,6 +154,7 @@ reviews:
         1. 数据加载和错误处理是否完善
         2. SEO 相关（页面标题、meta 标签）
         3. 导航和路由是否正确
+        4. admin/ 下的控制台页面修改设置时，注意 PUT /api/admin/settings 是全量合并语义，新增设置键要同步加入 Settings 类型和默认值
 
     - path: "client/src/globals.css"
       instructions: >
@@ -127,20 +163,41 @@ reviews:
         2. OKLCH 色值的明度/色度是否合理
         3. 是否有遗漏的选择器未覆盖亮色模式
 
-    - path: "server/src/storage/**"
-      instructions: >
-        存储适配器层（数据库 + 对象存储）。审查时请关注：
-        1. 接口实现是否完整（IDatabase / IObjectStorage）
-        2. SQL 注入防护（参数化查询）
-        3. 多后端（D1/Turso/PostgreSQL）行为一致性
-        4. 错误处理和边界情况
-
     - path: "server/src/index.ts"
       instructions: >
         Hono Workers API 路由总入口。审查时请关注：
-        1. JWT 认证中间件是否正确保护管理接口
+        1. JWT 认证中间件是否正确保护管理接口；公开端点（track/friends/guestbook）的限流与白名单校验
         2. CORS 配置是否安全
-        3. 请求参数验证
+        3. 请求参数验证（clampIntSetting 白名单、normalizeSettings 字段校验）
+        4. 新增管理端点（*-status 类）只返回布尔状态，不得暴露 secret 值
+
+    - path: "server/src/storage/**"
+      instructions: >
+        存储适配器层（数据库 + 对象存储）。审查时请关注：
+        1. 接口实现是否完整（IDatabase / IObjectStorage），D1/Turso/PostgreSQL 三方行为一致性
+        2. SQL 注入防护（参数化查询）
+        3. settings 表为自由 key-value（saveSettings 逐键 upsert），新增设置键无需迁移，但需确认三个适配器均支持
+        4. 错误处理和边界情况
+
+    - path: "server/src/analytics/**"
+      instructions: >
+        Analytics Engine 采集与查询。审查时请关注：
+        1. 采集白名单 isWebsiteAllowed 的域名匹配（主域匹配子域）与控制台设置的优先级
+        2. 高频埋点端点的设置读取必须走短 TTL 缓存，避免每次请求读 D1
+        3. 查询凭据只从 Workers secret/env 读取，不得落库或写日志
+
+    - path: "server/wrangler.toml"
+      instructions: >
+        Workers 部署配置。审查时请关注：
+        1. [vars] 只允许非敏感配置；凭据必须走 wrangler secret put，发现疑似 secret 明文即标记严重问题
+        2. 绑定（D1/R2/AE/cron）变更需说明对 Turso/PG 部署路径的影响
+
+    - path: "scripts/**"
+      instructions: >
+        部署与运维脚本（deploy-cloudflare.mjs、reconcile-d1-schema.mjs 等）。审查时请关注：
+        1. secret 只通过 stdin/环境注入，不得出现在命令行参数、日志或错误输出
+        2. 部署链路顺序：远程 D1 migrations → schema reconcile → Workers secret/deploy → Pages API_BASE → build → Pages deploy，不得跳过迁移直接部署
+        3. 与 release-please 流程的边界（不手动 npm version / git tag / gh release）
 
     - path: "client/functions/**"
       instructions: >
@@ -190,9 +247,9 @@ reviews:
 
   # ── 工具配置 ──
   tools:
-    # 启用与项目相关的 Lint 工具
+    # Lint：仓库以 ESLint 为唯一权威（npm run lint），biome 会产生重复/冲突规则，关闭
     biome:
-      enabled: true
+      enabled: false
     eslint:
       enabled: true
     markdownlint:
@@ -204,11 +261,11 @@ reviews:
     ast-grep:
       essential_rules: true
 
-    # 安全扫描
+    # 安全扫描：gitleaks 为主，关闭 trufflehog 避免双报噪音
     gitleaks:
       enabled: true
     trufflehog:
-      enabled: true
+      enabled: false
     github-checks:
       enabled: true
       timeout_ms: 120000

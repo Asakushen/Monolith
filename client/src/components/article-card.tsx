@@ -6,6 +6,7 @@ import { ArrowRight, CalendarDays, FolderOpen, Pin } from "lucide-react";
 import type { CSSProperties } from "react";
 import { useSiteSettings } from "@/lib/site-settings";
 import { formatSiteDate } from "@/lib/date-format";
+import { tagHueClass } from "@/lib/tag-color";
 
 export function ArticleCard({ post }: { post: PostMeta }) {
   const { dateSettings } = useSiteSettings();
@@ -33,7 +34,7 @@ export function ArticleCard({ post }: { post: PostMeta }) {
         </Badge>
       )}
       {post.tags.slice(0, 2).map((tag) => (
-        <Badge key={tag} variant="secondary" className="h-[24px] rounded-[4px] px-[8px] text-[12px] font-normal tracking-normal">{tag}</Badge>
+        <Badge key={tag} variant="secondary" className={`tag-chip ${tagHueClass(tag)} h-[24px] rounded-[4px] px-[8px] text-[12px] font-normal tracking-normal`}>{tag}</Badge>
       ))}
       <span className="inline-flex items-center gap-[4px] text-[12px] text-muted-foreground/55">
         <CalendarDays className="h-[12px] w-[12px]" />

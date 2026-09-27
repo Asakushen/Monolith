@@ -16,6 +16,7 @@ import { PostReactions } from "@/components/post-reactions";
 import { ShareButtons } from "@/components/share-buttons";
 import { useSiteSettings } from "@/lib/site-settings";
 import { formatSiteDate } from "@/lib/date-format";
+import { tagHueClass } from "@/lib/tag-color";
 
 const renderedPostCache = new Map<string, {
   htmlContent: string;
@@ -221,7 +222,7 @@ export function PostPage() {
             </div>
             <div className="mb-[16px] flex flex-wrap items-center gap-[8px]">
               {post.tags.map((tag) => (
-                <Badge key={tag} variant="secondary" className="h-[22px] rounded-[4px] px-[8px] text-[12px] font-normal">{tag}</Badge>
+                <Badge key={tag} variant="secondary" className={`tag-chip ${tagHueClass(tag)} h-[22px] rounded-[4px] px-[8px] text-[12px] font-normal`}>{tag}</Badge>
               ))}
               <span className="text-[12px] text-muted-foreground/50">{formatSiteDate(post.createdAt, dateSettings)}</span>
               <span className="text-[12px] text-muted-foreground/50 inline-flex items-center gap-[4px]"><Eye className="h-[12px] w-[12px]" />{(post.viewCount ?? 0).toLocaleString()}</span>

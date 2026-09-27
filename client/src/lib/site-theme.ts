@@ -31,7 +31,7 @@ export function applySiteTheme(mode: SiteThemeMode, style: SiteThemeStyle): void
         : "#0d0b1a"
       : effective === "light"
         ? "#ffffff"
-        : "#0a0a0f";
+        : "#0d1117";
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute("content", themeColor);
   writeThemeCookie(mode, style);

@@ -7,6 +7,7 @@ import { AnimateIn } from "@/hooks/use-animate";
 import { SeoHead } from "@/components/seo-head";
 import { useSiteSettings } from "@/lib/site-settings";
 import { formatSiteDate, getSiteDateYear } from "@/lib/date-format";
+import { tagHueClass } from "@/lib/tag-color";
 
 export function ArchivePage() {
   const { dateSettings } = useSiteSettings();
@@ -113,7 +114,7 @@ export function ArchivePage() {
                   <span className="min-w-0 truncate text-[15px] text-foreground transition-colors duration-200 group-hover:text-foreground/82">{post.title}</span>
                   <div className="ml-auto hidden shrink-0 gap-[4px] sm:flex">
                     {post.tags.slice(0, 1).map((tag) => (
-                      <Badge key={tag} variant="outline" className="h-[20px] rounded-[3px] px-[6px] text-[11px] font-normal text-muted-foreground/50">{tag}</Badge>
+                      <Badge key={tag} variant="outline" className={`tag-chip ${tagHueClass(tag)} h-[20px] rounded-[3px] px-[6px] text-[11px] font-normal`}>{tag}</Badge>
                     ))}
                   </div>
                 </Link>

@@ -144,9 +144,9 @@ npm run deploy:cloudflare   # 远程迁移 → Workers → API_BASE 注入 → P
 
 | 方案 | 状态 | 适用场景 |
 |------|------|---------|
-| 本机 CLI `npm run deploy:cloudflare` | ✅ 生产验证 | 推荐首选 |
+| 本机 CLI `npm run deploy:cloudflare` | ✅ 生产验证 | 首次部署推荐 |
 | 不覆盖 secret 分步链路 | ✅ 生产验证 | 已上线站点日常更新 |
-| GitHub Actions `Cloudflare Deploy` | ⚠️ 待端到端验证 | CI/CD 集成（验收前请慎用） |
+| GitHub Actions `Cloudflare Deploy` | ✅ 生产验证（含部署后自动健康检查） | 手动触发的一键 CI 部署 |
 
 ---
 

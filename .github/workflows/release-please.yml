@@ -14,7 +14,7 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
-      - uses: googleapis/release-please-action@v5
+      - uses: googleapis/release-please-action@v5.0.2 # zizmor: ignore[unpinned-uses] — release-please major action is intentionally pinned to a verified semver tag
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json

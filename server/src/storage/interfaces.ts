@@ -156,6 +156,14 @@ export type CreateCommentInput = {
   authorName: string;
   authorEmail?: string;
   content: string;
+  parentId?: number | null;
+};
+
+export type CommentApprovalResult = {
+  found: boolean;
+  becameApproved: boolean;
+  comment?: Comment & { postSlug: string; postTitle: string };
+  parent?: Comment & { postSlug: string; postTitle: string };
 };
 
 export type GuestbookMessage = {
@@ -278,7 +286,7 @@ export interface IDatabase {
   addComment(input: CreateCommentInput): Promise<Comment>;
   addCommentReply(parentId: number, input: Pick<CreateCommentInput, "authorName" | "content">): Promise<{ reply: Comment; parent: Comment & { postSlug: string; postTitle: string } }>;
   getAllComments(): Promise<(Comment & { postSlug: string; postTitle: string })[]>;
-  approveComment(id: number): Promise<boolean>;
+  approveComment(id: number): Promise<CommentApprovalResult>;
   deleteComment(id: number): Promise<boolean>;
   getCommentCount(postSlug: string): Promise<number>;
 

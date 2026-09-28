@@ -971,6 +971,10 @@ export class PostgresAdapter implements IDatabase {
       .where(eq(pgPosts.slug, input.postSlug))
       .limit(1);
     if (!post) throw new Error("文章不存在");
+    if (input.parentId != null) {
+      const [parent] = await this.client`SELECT id FROM comments WHERE id = ${input.parentId} AND post_id = ${post.id} AND approved = true LIMIT 1`;
+      if (!parent) throw new Error("只能回复同一文章中已审核的评论");
+    }
 
     const [newComment] = await this.db
       .insert(pgComments)
@@ -980,6 +984,7 @@ export class PostgresAdapter implements IDatabase {
         authorEmail: input.authorEmail || "",
         content: input.content,
         approved: false,
+        parentId: input.parentId ?? null,
       })
       .returning();
 
@@ -997,8 +1002,8 @@ export class PostgresAdapter implements IDatabase {
 
   async addCommentReply(parentId: number, input: Pick<CreateCommentInput, "authorName" | "content">) {
     type Row = { id: number; post_id: number; author_name: string; author_email: string; content: string; approved: boolean; parent_id: number | null; created_at: Date; post_slug: string; post_title: string };
-    const [row] = await this.client<Row[]>`SELECT c.*, p.slug AS post_slug, p.title AS post_title FROM comments c INNER JOIN posts p ON c.post_id = p.id WHERE c.id = ${parentId} AND c.approved = true AND c.parent_id IS NULL LIMIT 1`;
-    if (!row) throw new Error("只能回复已审核的一级评论");
+    const [row] = await this.client<Row[]>`SELECT c.*, p.slug AS post_slug, p.title AS post_title FROM comments c INNER JOIN posts p ON c.post_id = p.id WHERE c.id = ${parentId} AND c.approved = true LIMIT 1`;
+    if (!row) throw new Error("只能回复同一文章中已审核的评论");
     const [created] = await this.db.insert(pgComments).values({ postId: row.post_id, authorName: input.authorName, authorEmail: "", content: input.content, approved: true, parentId }).returning();
     return {
       reply: { id: created.id, postId: created.postId, authorName: created.authorName, authorEmail: created.authorEmail, content: created.content, approved: created.approved, parentId: created.parentId, createdAt: this.ts(created.createdAt) },
@@ -1029,13 +1034,19 @@ export class PostgresAdapter implements IDatabase {
     }));
   }
 
-  async approveComment(id: number): Promise<boolean> {
-    const result = await this.db
-      .update(pgComments)
-      .set({ approved: true })
-      .where(eq(pgComments.id, id))
-      .returning();
-    return result.length > 0;
+  async approveComment(id: number) {
+    type Row = { id: number; post_id: number; author_name: string; author_email: string; content: string; approved: boolean; parent_id: number | null; created_at: Date; post_slug: string; post_title: string };
+    const [row] = await this.client<Row[]>`SELECT c.*, p.slug AS post_slug, p.title AS post_title FROM comments c INNER JOIN posts p ON c.post_id = p.id WHERE c.id = ${id} LIMIT 1`;
+    if (!row) return { found: false, becameApproved: false };
+    const updated = await this.db.update(pgComments).set({ approved: true }).where(and(eq(pgComments.id, id), eq(pgComments.approved, false))).returning({ id: pgComments.id });
+    const becameApproved = updated.length > 0;
+    const toComment = (value: Row) => ({ id: value.id, postId: value.post_id, authorName: value.author_name, authorEmail: value.author_email || "", content: value.content, approved: true, parentId: value.parent_id, createdAt: this.ts(value.created_at), postSlug: value.post_slug, postTitle: value.post_title });
+    let parent;
+    if (row.parent_id != null) {
+      const [parentRow] = await this.client<Row[]>`SELECT c.*, p.slug AS post_slug, p.title AS post_title FROM comments c INNER JOIN posts p ON c.post_id = p.id WHERE c.id = ${row.parent_id} LIMIT 1`;
+      if (parentRow) parent = toComment(parentRow);
+    }
+    return { found: true, becameApproved, comment: toComment(row), parent };
   }
 
   async deleteComment(id: number): Promise<boolean> {

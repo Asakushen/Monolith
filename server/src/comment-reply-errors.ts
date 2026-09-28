@@ -1,4 +1,4 @@
-export const INELIGIBLE_COMMENT_REPLY_ERROR = "只能回复已审核的一级评论";
+export const INELIGIBLE_COMMENT_REPLY_ERROR = "只能回复同一文章中已审核的评论";
 
 type ReplyErrorResponse = {
   error: string;

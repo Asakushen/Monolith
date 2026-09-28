@@ -940,6 +940,10 @@ export class TursoAdapter implements IDatabase {
       .where(eq(posts.slug, input.postSlug))
       .limit(1);
     if (!post) throw new Error("文章不存在");
+    if (input.parentId != null) {
+      const parent = await this.db.run(sql`SELECT id FROM comments WHERE id = ${input.parentId} AND post_id = ${post.id} AND approved = 1 LIMIT 1`);
+      if (!parent.rows?.[0]) throw new Error("只能回复同一文章中已审核的评论");
+    }
 
     const [newComment] = await this.db
       .insert(comments)
@@ -949,6 +953,7 @@ export class TursoAdapter implements IDatabase {
         authorEmail: input.authorEmail || "",
         content: input.content,
         approved: false,
+        parentId: input.parentId ?? null,
       })
       .returning();
 
@@ -966,9 +971,9 @@ export class TursoAdapter implements IDatabase {
 
   async addCommentReply(parentId: number, input: Pick<CreateCommentInput, "authorName" | "content">) {
     await this.ensureCommentsTable();
-    const found = await this.db.run(sql`SELECT c.*, p.slug AS post_slug, p.title AS post_title FROM comments c INNER JOIN posts p ON c.post_id = p.id WHERE c.id = ${parentId} AND c.approved = 1 AND c.parent_id IS NULL LIMIT 1`);
+    const found = await this.db.run(sql`SELECT c.*, p.slug AS post_slug, p.title AS post_title FROM comments c INNER JOIN posts p ON c.post_id = p.id WHERE c.id = ${parentId} AND c.approved = 1 LIMIT 1`);
     const row = found.rows?.[0] as Record<string, unknown> | undefined;
-    if (!row) throw new Error("只能回复已审核的一级评论");
+    if (!row) throw new Error("只能回复同一文章中已审核的评论");
     const [created] = await this.db.insert(comments).values({ postId: Number(row.post_id), authorName: input.authorName, authorEmail: "", content: input.content, approved: true, parentId }).returning();
     return {
       reply: { id: created.id, postId: created.postId, authorName: created.authorName, authorEmail: created.authorEmail, content: created.content, approved: created.approved, parentId: created.parentId, createdAt: created.createdAt },
@@ -999,14 +1004,21 @@ export class TursoAdapter implements IDatabase {
     }));
   }
 
-  async approveComment(id: number): Promise<boolean> {
+  async approveComment(id: number) {
     await this.ensureCommentsTable();
-    const result = await this.db
-      .update(comments)
-      .set({ approved: true })
-      .where(eq(comments.id, id))
-      .returning();
-    return result.length > 0;
+    const result = await this.db.run(sql`SELECT c.*, p.slug AS post_slug, p.title AS post_title FROM comments c INNER JOIN posts p ON c.post_id = p.id WHERE c.id = ${id} LIMIT 1`);
+    const row = result.rows?.[0] as Record<string, unknown> | undefined;
+    if (!row) return { found: false, becameApproved: false };
+    const updated = await this.db.update(comments).set({ approved: true }).where(and(eq(comments.id, id), eq(comments.approved, false))).returning({ id: comments.id });
+    const becameApproved = updated.length > 0;
+    const toComment = (value: Record<string, unknown>) => ({ id: Number(value.id), postId: Number(value.post_id), authorName: String(value.author_name), authorEmail: String(value.author_email || ""), content: String(value.content), approved: true, parentId: value.parent_id == null ? null : Number(value.parent_id), createdAt: String(value.created_at), postSlug: String(value.post_slug), postTitle: String(value.post_title) });
+    let parent;
+    if (row.parent_id != null) {
+      const parentResult = await this.db.run(sql`SELECT c.*, p.slug AS post_slug, p.title AS post_title FROM comments c INNER JOIN posts p ON c.post_id = p.id WHERE c.id = ${Number(row.parent_id)} LIMIT 1`);
+      const parentRow = parentResult.rows?.[0] as Record<string, unknown> | undefined;
+      if (parentRow) parent = toComment(parentRow);
+    }
+    return { found: true, becameApproved, comment: toComment(row), parent };
   }
 
   async deleteComment(id: number): Promise<boolean> {

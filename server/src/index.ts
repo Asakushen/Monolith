@@ -695,6 +695,7 @@ app.post("/api/posts/:slug/comments", async (c) => {
     authorName: string;
     authorEmail?: string;
     content: string;
+    parentId?: number;
     _hp?: string; // honeypot 反垃圾字段
   }>(c);
   if (!parsed.ok) return parsed.response;
@@ -709,6 +710,9 @@ app.post("/api/posts/:slug/comments", async (c) => {
   if (body.content.length > 2000) {
     return c.json({ error: "评论内容不能超过 2000 字" }, 400);
   }
+  if (body.parentId != null && (!Number.isInteger(body.parentId) || body.parentId <= 0)) {
+    return c.json({ error: "无效的回复目标" }, 400);
+  }
 
   const db = c.get("db");
   const post = await db.getPostBySlug(slug);
@@ -719,6 +723,7 @@ app.post("/api/posts/:slug/comments", async (c) => {
       authorName: body.authorName.trim(),
       authorEmail: body.authorEmail?.trim() || "",
       content: body.content.trim(),
+      parentId: body.parentId ?? null,
     });
     
     // 异步触发评论提醒邮件（Resend/Webhook）：收件人与发件人支持控制台配置
@@ -733,7 +738,7 @@ app.post("/api/posts/:slug/comments", async (c) => {
              <p><a href="${siteOrigin}/admin/comments">前往后台审核</a></p>`,
     });
 
-    return c.json({ success: true, message: "评论已提交，等待审核" });
+    return c.json({ success: true, message: body.parentId ? "回复已提交，审核通过后公开" : "评论已提交，等待审核" });
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : "提交失败" }, 400);
   }
@@ -1396,12 +1401,16 @@ app.post("/api/admin/comments/:id/approve", async (c) => {
   const id = parseInt(c.req.param("id"));
   if (isNaN(id)) return c.json({ error: "无效 ID" }, 400);
   const db = c.get("db");
-  const ok = await db.approveComment(id);
-  if (!ok) return c.json({ error: "评论不存在" }, 404);
+  const result = await db.approveComment(id);
+  if (!result.found) return c.json({ error: "评论不存在" }, 404);
+  if (result.becameApproved && result.comment && result.parent && shouldNotifyCommentReply(result.parent)) {
+    const { siteOrigin } = await getNotificationSettings(c);
+    await sendEmail(c, { to: result.parent.authorEmail, ...buildCommentReplyEmail({ recipientName: result.parent.authorName, replyAuthorName: result.comment.authorName, replyContent: result.comment.content, postTitle: result.comment.postTitle, postSlug: result.comment.postSlug, parentCommentId: result.parent.id, siteOrigin }) });
+  }
   return c.json({ success: true });
 });
 
-// 回复已审核评论（仅管理员；直接公开）
+// 管理员回复任意已审核评论（直接公开）
 app.post("/api/admin/comments/:id/replies", async (c) => {
   const parentId = Number.parseInt(c.req.param("id"), 10);
   if (!Number.isInteger(parentId) || parentId <= 0) return c.json({ error: "无效 ID" }, 400);

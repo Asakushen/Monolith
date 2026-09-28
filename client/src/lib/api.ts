@@ -592,6 +592,7 @@ export async function submitComment(slug: string, data: {
   authorName: string;
   authorEmail?: string;
   content: string;
+  parentId?: number;
   _hp?: string;
 }): Promise<{ success: boolean; message?: string; error?: string }> {
   const res = await fetch(`${API_BASE}/api/posts/${slug}/comments`, {

@@ -54,7 +54,7 @@ export function AdminComments() {
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm("确定删除此评论？此操作不可撤销。")) return;
+    if (!confirm("确定删除此评论及其所有后代回复？此操作不可撤销。")) return;
     setProcessing(id);
     try {
       await deleteComment(id);
@@ -92,7 +92,7 @@ export function AdminComments() {
       <div className="mb-[24px] flex items-center justify-between">
         <div>
           <h1 className="text-[24px] font-semibold tracking-[-0.02em]">互动审核</h1>
-          <p className="mt-[3px] text-[13px] text-muted-foreground/40">处理互动反馈、可见状态与内容质量</p>
+          <p className="mt-[3px] text-[13px] text-muted-foreground/40">审核公开评论与嵌套回复；博主回复会立即公开</p>
         </div>
       </div>
 
@@ -226,7 +226,7 @@ export function AdminComments() {
 
                 {/* 操作按钮 */}
                 <div className="flex items-center gap-[1px] shrink-0 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
-                  {comment.approved && !comment.parentId && (
+                  {comment.approved && (
                     <button onClick={() => { setReplyingTo(replyingTo === comment.id ? null : comment.id); setReplyContent(""); }} title="回复" className="p-[7px] rounded-md text-muted-foreground/30 hover:text-foreground">
                       <Reply className="h-[14px] w-[14px]" />
                     </button>

@@ -1,6 +1,6 @@
 name = "monolith-server"
 main = "src/index.ts"
-account_id = "9d9474f286c406f50848ac46c7a15877"
+account_id = "54a48beaa1b4d3e852d3f80a74b8de0a"
 compatibility_date = "2024-12-30"
 compatibility_flags = ["nodejs_compat"]
 

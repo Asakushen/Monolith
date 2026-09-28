@@ -123,6 +123,10 @@ jobs:
             --branch "${{ inputs.pages_branch }}" \
             --commit-dirty=true \
             --commit-message "deploy ${{ github.sha }}" 2>&1 | tee /tmp/pages-deploy.log
+          if ! grep -q "Uploading Functions bundle" /tmp/pages-deploy.log; then
+            echo "::error::Pages Functions 未上传；必须从 client/ 部署相对路径 dist"
+            exit 1
+          fi
           PAGES_URL="$(grep -oE 'https://[a-zA-Z0-9.-]+\.pages\.dev' /tmp/pages-deploy.log | tail -1 || true)"
           if [ -n "${PAGES_URL}" ]; then echo "PAGES_URL=${PAGES_URL}" >> "$GITHUB_ENV"; fi
         working-directory: client
@@ -137,6 +141,9 @@ jobs:
             echo "${code} ${BASE}${path}"
             case "${code}" in 2*|3*) ;; *) fail=1 ;; esac
           done
+          api_content_type="$(curl -fsSI --max-time 30 "${BASE}/api/posts" | tr -d '\r' | awk -F': *' 'tolower($1) == "content-type" { print tolower($2); exit }')"
+          echo "content-type=${api_content_type:-missing} ${BASE}/api/posts"
+          case "${api_content_type}" in application/json*) ;; *) fail=1 ;; esac
           if [ -n "${WORKERS_URL}" ]; then
             code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "${WORKERS_URL}/api/health")"
             echo "${code} ${WORKERS_URL}/api/health"

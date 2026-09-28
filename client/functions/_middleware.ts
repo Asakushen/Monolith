@@ -77,14 +77,18 @@ async function tryInjectFriendLinks(
       ? `${html.slice(0, bodyEnd)}${injected}${html.slice(bodyEnd)}`
       : `${html}${injected}`;
 
+    const responseHeaders = new Headers(pageResponse.headers);
+    responseHeaders.set("Content-Type", "text/html; charset=utf-8");
+    responseHeaders.set("Cache-Control", "public, max-age=120, s-maxage=300, stale-while-revalidate=600");
+    responseHeaders.set("X-Robots-Tag", "index, follow");
+    responseHeaders.set("X-Friend-Link-Prerender", String(links.length));
+    responseHeaders.delete("Content-Length");
+    responseHeaders.delete("ETag");
+
     return new Response(enhanced, {
       status: pageResponse.status,
-      headers: {
-        "Content-Type": "text/html; charset=utf-8",
-        "Cache-Control": "public, max-age=120, s-maxage=300, stale-while-revalidate=600",
-        "X-Robots-Tag": "index, follow",
-        "X-Friend-Link-Prerender": String(links.length),
-      },
+      statusText: pageResponse.statusText,
+      headers: responseHeaders,
     });
   } catch {
     return null;
@@ -186,8 +190,8 @@ const prerender: PagesFunction<Env> = async (context) => {
     // 转义 HTML 特殊字符
     const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-    // 替换 <title>
-    html = html.replace(/<title>[^<]*<\/title>/, `<title>${esc(post.title)} | Monolith</title>`);
+    // 替换 <title>，保留浅草物语公开品牌（静态壳已用同一站名）。
+    html = html.replace(/<title>[^<]*<\/title>/, `<title>${esc(post.title)} | 浅草物语</title>`);
 
     // 替换 OG 标签
     html = html.replace(

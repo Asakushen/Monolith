@@ -68,7 +68,7 @@ function CommentForm({ slug, parent, isAdminLoggedIn, onSubmitted, onCancel }: C
     <form onSubmit={handleSubmit} className="space-y-[12px]">
       {isAdminLoggedIn ? (
         <div className="flex items-center gap-[8px] rounded-md border border-primary/30 bg-primary/10 px-[12px] py-[6px] text-[12px] text-primary font-medium">
-          <span>已验证博主身份 · {parent ? `回复 ${parent.authorName}` : "发表评论"}（即时公开，无需审核）</span>
+          <span>已验证博主身份 · {parent ? `回复 ${parent.authorName}` : "发表评论"}</span>
         </div>
       ) : (
         parent && <p className="text-[12px] text-muted-foreground/60">回复 {parent.authorName} · 审核通过后公开</p>

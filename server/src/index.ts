@@ -660,31 +660,22 @@ app.post("/api/posts/:slug/comments", async (c) => {
       content: body.content.trim(),
     });
     
-    // 异步触发评论提醒邮件（Resend/Webhook）
-    const escHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    const resendKey = (c.env as any).RESEND_API_KEY;
-    const adminEmail = (c.env as any).ADMIN_EMAIL;
-    if (resendKey && adminEmail) {
-      const emailPromise = fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${resendKey}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          from: "Monolith Bot <onboarding@resend.dev>", // Resend 测试域名或需要替换为自有域名
-          to: adminEmail,
-          subject: `[Monolith] 新评论待审核: ${slug}`,
-          html: `<p><strong>${escHtml(body.authorName.trim())}</strong> 刚刚在文章 <code>${escHtml(slug)}</code> 提交了评论：</p>
-                 <blockquote style="border-left: 4px solid #eee; padding-left: 10px; color: #555;">${escHtml(body.content.trim())}</blockquote>
-                 <p>邮箱: ${escHtml(body.authorEmail?.trim() || "无")}</p>
-                 <p><a href="https://${new URL(c.req.url).hostname}/admin/comments">前往后台审核</a></p>`
-        })
-      }).catch(() => {});
-      
-      if (c.executionCtx?.waitUntil) {
-        c.executionCtx.waitUntil(emailPromise);
-      }
+    // 异步触发评论提醒（Resend/Webhook），通知失败不影响评论提交。
+    await triggerWebhook(c, "comment_submitted", {
+      postSlug: slug,
+      authorName: body.authorName.trim(),
+    });
+    const adminEmail = c.env.ADMIN_EMAIL;
+    if (adminEmail) {
+      const origin = publicSiteOrigin(c);
+      sendEmail(c, {
+        to: adminEmail,
+        subject: `[浅草物语] 新评论待审核: ${slug}`,
+        html: `<p><strong>${escapeEmailHtml(body.authorName.trim())}</strong> 刚刚在文章 <code>${escapeEmailHtml(slug)}</code> 提交了评论：</p>
+               <blockquote style="border-left: 4px solid #eee; padding-left: 10px; color: #555;">${escapeEmailHtml(body.content.trim())}</blockquote>
+               <p>邮箱: ${escapeEmailHtml(body.authorEmail?.trim() || "无")}</p>
+               <p><a href="${origin}/admin/comments">前往后台审核</a></p>`,
+      });
     }
 
     return c.json({ success: true, message: "评论已提交，等待审核" });

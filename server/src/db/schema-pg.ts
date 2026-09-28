@@ -82,10 +82,12 @@ export const pgComments = pgTable(
     authorEmail: text("author_email").notNull().default(""),
     content: text("content").notNull(),
     approved: boolean("approved").notNull().default(false),
+    parentId: integer("parent_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
     postIdIdx: index("pg_comments_post_id_idx").on(table.postId),
+    parentIdIdx: index("pg_comments_parent_id_idx").on(table.parentId),
   })
 );
 

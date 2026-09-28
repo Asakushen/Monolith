@@ -73,7 +73,7 @@ export class D1Adapter implements IDatabase {
       ],
       settings: ["key", "value"],
       pages: ["id", "slug", "title", "content", "sort_order", "published", "show_in_nav", "created_at", "updated_at"],
-      comments: ["id", "post_id", "author_name", "author_email", "content", "approved", "created_at"],
+      comments: ["id", "post_id", "author_name", "author_email", "content", "approved", "parent_id", "created_at"],
       guestbook_messages: ["id", "author_name", "author_email", "content", "approved", "created_at"],
       friend_links: ["id", "name", "url", "description", "avatar_url", "owner_name", "owner_email", "status", "source", "sort_order", "created_at", "updated_at", "reviewed_at"],
       post_versions: ["id", "post_id", "title", "content", "excerpt", "created_at"],
@@ -242,9 +242,12 @@ export class D1Adapter implements IDatabase {
       author_email TEXT NOT NULL DEFAULT '',
       content TEXT NOT NULL,
       approved INTEGER NOT NULL DEFAULT 0,
+      parent_id INTEGER REFERENCES comments(id) ON DELETE CASCADE,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`);
+    try { await this.db.run(sql`ALTER TABLE comments ADD COLUMN parent_id INTEGER REFERENCES comments(id) ON DELETE CASCADE`); } catch {}
     await this.db.run(sql`CREATE INDEX IF NOT EXISTS comments_post_id_idx ON comments(post_id)`);
+    await this.db.run(sql`CREATE INDEX IF NOT EXISTS comments_parent_id_idx ON comments(parent_id)`);
   }
 
   private async ensureGuestbookMessagesTable(): Promise<void> {
@@ -977,7 +980,7 @@ export class D1Adapter implements IDatabase {
   async getApprovedComments(postSlug: string): Promise<Comment[]> {
     await this.ensureCommentsTable();
     const result = await this.db.run(
-      sql`SELECT c.id, c.post_id, c.author_name, c.author_email, c.content, c.approved, c.created_at
+      sql`SELECT c.id, c.post_id, c.author_name, c.author_email, c.content, c.approved, c.parent_id, c.created_at
           FROM comments c
           INNER JOIN posts p ON c.post_id = p.id
           WHERE p.slug = ${postSlug} AND c.approved = 1
@@ -991,6 +994,7 @@ export class D1Adapter implements IDatabase {
       authorEmail: r.author_email as string || "",
       content: r.content as string,
       approved: Boolean(r.approved),
+      parentId: r.parent_id == null ? null : Number(r.parent_id),
       createdAt: r.created_at as string,
     }));
   }
@@ -1023,14 +1027,27 @@ export class D1Adapter implements IDatabase {
       authorEmail: newComment.authorEmail,
       content: newComment.content,
       approved: newComment.approved,
+      parentId: newComment.parentId,
       createdAt: newComment.createdAt,
+    };
+  }
+
+  async addCommentReply(parentId: number, input: Pick<CreateCommentInput, "authorName" | "content">) {
+    await this.ensureCommentsTable();
+    const found = await this.db.run(sql`SELECT c.*, p.slug AS post_slug, p.title AS post_title FROM comments c INNER JOIN posts p ON c.post_id = p.id WHERE c.id = ${parentId} AND c.approved = 1 LIMIT 1`);
+    const row = found.results?.[0] as Record<string, unknown> | undefined;
+    if (!row) throw new Error("只能回复已审核的评论");
+    const [created] = await this.db.insert(comments).values({ postId: Number(row.post_id), authorName: input.authorName, authorEmail: "", content: input.content, approved: true, parentId }).returning();
+    return {
+      reply: { id: created.id, postId: created.postId, authorName: created.authorName, authorEmail: created.authorEmail, content: created.content, approved: created.approved, parentId: created.parentId, createdAt: created.createdAt },
+      parent: { id: Number(row.id), postId: Number(row.post_id), authorName: String(row.author_name), authorEmail: String(row.author_email || ""), content: String(row.content), approved: Boolean(row.approved), parentId: row.parent_id == null ? null : Number(row.parent_id), createdAt: String(row.created_at), postSlug: String(row.post_slug), postTitle: String(row.post_title) },
     };
   }
 
   async getAllComments(): Promise<(Comment & { postSlug: string; postTitle: string })[]> {
     await this.ensureCommentsTable();
     const result = await this.db.run(
-      sql`SELECT c.id, c.post_id, c.author_name, c.author_email, c.content, c.approved, c.created_at,
+      sql`SELECT c.id, c.post_id, c.author_name, c.author_email, c.content, c.approved, c.parent_id, c.created_at,
                  p.slug as post_slug, p.title as post_title
           FROM comments c
           INNER JOIN posts p ON c.post_id = p.id
@@ -1044,6 +1061,7 @@ export class D1Adapter implements IDatabase {
       authorEmail: r.author_email as string || "",
       content: r.content as string,
       approved: Boolean(r.approved),
+      parentId: r.parent_id == null ? null : Number(r.parent_id),
       createdAt: r.created_at as string,
       postSlug: r.post_slug as string,
       postTitle: r.post_title as string,

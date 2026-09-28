@@ -5,6 +5,7 @@
    ────────────────────────────────────────────── */
 
 import { Hono } from "hono";
+import { buildCommentReplyEmail, shouldNotifyCommentReply } from "./comment-notifications";
 import { cors } from "hono/cors";
 import { sign, verify } from "hono/jwt";
 import type { Context } from "hono";
@@ -1397,6 +1398,29 @@ app.post("/api/admin/comments/:id/approve", async (c) => {
   const ok = await db.approveComment(id);
   if (!ok) return c.json({ error: "评论不存在" }, 404);
   return c.json({ success: true });
+});
+
+// 回复已审核评论（仅管理员；直接公开）
+app.post("/api/admin/comments/:id/replies", async (c) => {
+  const parentId = Number.parseInt(c.req.param("id"), 10);
+  if (!Number.isInteger(parentId) || parentId <= 0) return c.json({ error: "无效 ID" }, 400);
+  const parsed = await readJson<{ authorName?: string; content: string }>(c);
+  if (!parsed.ok) return parsed.response;
+  const authorName = parsed.body.authorName?.trim() || "博主";
+  const content = parsed.body.content?.trim();
+  if (!content) return c.json({ error: "回复内容不能为空" }, 400);
+  if (content.length > 2000) return c.json({ error: "回复内容不能超过 2000 字" }, 400);
+  try {
+    const { reply, parent } = await c.get("db").addCommentReply(parentId, { authorName, content });
+    if (shouldNotifyCommentReply(parent)) {
+      const { siteOrigin } = await getNotificationSettings(c);
+      await sendEmail(c, { to: parent.authorEmail, ...buildCommentReplyEmail({ recipientName: parent.authorName, replyAuthorName: reply.authorName, replyContent: reply.content, postTitle: parent.postTitle, postSlug: parent.postSlug, parentCommentId: parent.id, siteOrigin }) });
+    }
+    return c.json(reply, 201);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "回复失败";
+    return c.json({ error: message }, message === "只能回复已审核的评论" ? 400 : 500);
+  }
 });
 
 // 删除评论

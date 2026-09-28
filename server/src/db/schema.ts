@@ -79,12 +79,14 @@ export const comments = sqliteTable(
     authorEmail: text("author_email").notNull().default(""),
     content: text("content").notNull(),
     approved: integer("approved", { mode: "boolean" }).notNull().default(false),
+    parentId: integer("parent_id"),
     createdAt: text("created_at")
       .notNull()
       .default(sql`(datetime('now'))`),
   },
   (table) => ({
     postIdIdx: index("comments_post_id_idx").on(table.postId),
+    parentIdIdx: index("comments_parent_id_idx").on(table.parentId),
   })
 );
 

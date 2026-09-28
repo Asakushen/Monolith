@@ -120,10 +120,13 @@ export class PostgresAdapter implements IDatabase {
         author_email TEXT NOT NULL DEFAULT '',
         content TEXT NOT NULL,
         approved BOOLEAN NOT NULL DEFAULT false,
+        parent_id INTEGER REFERENCES comments(id) ON DELETE CASCADE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `;
+    await this.client`ALTER TABLE comments ADD COLUMN IF NOT EXISTS parent_id INTEGER REFERENCES comments(id) ON DELETE CASCADE`;
     await this.client`CREATE INDEX IF NOT EXISTS pg_comments_post_id_idx ON comments(post_id)`;
+    await this.client`CREATE INDEX IF NOT EXISTS pg_comments_parent_id_idx ON comments(parent_id)`;
     await this.client`
       CREATE TABLE IF NOT EXISTS guestbook_messages (
         id SERIAL PRIMARY KEY,
@@ -940,9 +943,9 @@ export class PostgresAdapter implements IDatabase {
   /* ── 评论 ─────────────────── */
 
   async getApprovedComments(postSlug: string): Promise<Comment[]> {
-    type Row = { id: number; post_id: number; author_name: string; author_email: string; content: string; approved: boolean; created_at: Date };
+    type Row = { id: number; post_id: number; author_name: string; author_email: string; content: string; approved: boolean; parent_id: number | null; created_at: Date };
     const rows = await this.client<Row[]>`
-      SELECT c.id, c.post_id, c.author_name, c.author_email, c.content, c.approved, c.created_at
+      SELECT c.id, c.post_id, c.author_name, c.author_email, c.content, c.approved, c.parent_id, c.created_at
       FROM comments c
       INNER JOIN posts p ON c.post_id = p.id
       WHERE p.slug = ${postSlug} AND c.approved = true
@@ -955,6 +958,7 @@ export class PostgresAdapter implements IDatabase {
       authorEmail: r.author_email || "",
       content: r.content,
       approved: r.approved,
+      parentId: r.parent_id,
       createdAt: this.ts(r.created_at),
     }));
   }
@@ -986,14 +990,26 @@ export class PostgresAdapter implements IDatabase {
       authorEmail: newComment.authorEmail,
       content: newComment.content,
       approved: newComment.approved,
+      parentId: newComment.parentId,
       createdAt: this.ts(newComment.createdAt),
     };
   }
 
+  async addCommentReply(parentId: number, input: Pick<CreateCommentInput, "authorName" | "content">) {
+    type Row = { id: number; post_id: number; author_name: string; author_email: string; content: string; approved: boolean; parent_id: number | null; created_at: Date; post_slug: string; post_title: string };
+    const [row] = await this.client<Row[]>`SELECT c.*, p.slug AS post_slug, p.title AS post_title FROM comments c INNER JOIN posts p ON c.post_id = p.id WHERE c.id = ${parentId} AND c.approved = true LIMIT 1`;
+    if (!row) throw new Error("只能回复已审核的评论");
+    const [created] = await this.db.insert(pgComments).values({ postId: row.post_id, authorName: input.authorName, authorEmail: "", content: input.content, approved: true, parentId }).returning();
+    return {
+      reply: { id: created.id, postId: created.postId, authorName: created.authorName, authorEmail: created.authorEmail, content: created.content, approved: created.approved, parentId: created.parentId, createdAt: this.ts(created.createdAt) },
+      parent: { id: row.id, postId: row.post_id, authorName: row.author_name, authorEmail: row.author_email || "", content: row.content, approved: row.approved, parentId: row.parent_id, createdAt: this.ts(row.created_at), postSlug: row.post_slug, postTitle: row.post_title },
+    };
+  }
+
   async getAllComments(): Promise<(Comment & { postSlug: string; postTitle: string })[]> {
-    type Row = { id: number; post_id: number; author_name: string; author_email: string; content: string; approved: boolean; created_at: Date; post_slug: string; post_title: string };
+    type Row = { id: number; post_id: number; author_name: string; author_email: string; content: string; approved: boolean; parent_id: number | null; created_at: Date; post_slug: string; post_title: string };
     const rows = await this.client<Row[]>`
-      SELECT c.id, c.post_id, c.author_name, c.author_email, c.content, c.approved, c.created_at,
+      SELECT c.id, c.post_id, c.author_name, c.author_email, c.content, c.approved, c.parent_id, c.created_at,
              p.slug as post_slug, p.title as post_title
       FROM comments c
       INNER JOIN posts p ON c.post_id = p.id
@@ -1006,6 +1022,7 @@ export class PostgresAdapter implements IDatabase {
       authorEmail: r.author_email || "",
       content: r.content,
       approved: r.approved,
+      parentId: r.parent_id,
       createdAt: this.ts(r.created_at),
       postSlug: r.post_slug,
       postTitle: r.post_title,

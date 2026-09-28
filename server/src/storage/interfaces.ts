@@ -147,6 +147,7 @@ export type Comment = {
   authorEmail: string;
   content: string;
   approved: boolean;
+  parentId: number | null;
   createdAt: string;
 };
 
@@ -275,6 +276,7 @@ export interface IDatabase {
   /* 评论 */
   getApprovedComments(postSlug: string): Promise<Comment[]>;
   addComment(input: CreateCommentInput): Promise<Comment>;
+  addCommentReply(parentId: number, input: Pick<CreateCommentInput, "authorName" | "content">): Promise<{ reply: Comment; parent: Comment & { postSlug: string; postTitle: string } }>;
   getAllComments(): Promise<(Comment & { postSlug: string; postTitle: string })[]>;
   approveComment(id: number): Promise<boolean>;
   deleteComment(id: number): Promise<boolean>;

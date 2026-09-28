@@ -1,12 +1,12 @@
 import { useState, useEffect } from "react";
 import { Link } from "wouter";
 import {
-  fetchAdminComments, approveComment, deleteComment,
+  fetchAdminComments, approveComment, deleteComment, replyToComment,
   type AdminComment,
 } from "@/lib/api";
 import {
   Check, Trash2, MessageCircle, Clock, CheckCircle2,
-  ExternalLink,
+  ExternalLink, Reply,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useSiteSettings } from "@/lib/site-settings";
@@ -21,6 +21,8 @@ export function AdminComments() {
   const [filter, setFilter] = useState<FilterType>("all");
   const [processing, setProcessing] = useState<number | null>(null);
   const [error, setError] = useState("");
+  const [replyingTo, setReplyingTo] = useState<number | null>(null);
+  const [replyContent, setReplyContent] = useState("");
 
   useEffect(() => {
     document.title = "互动审核 | Monolith";
@@ -61,6 +63,17 @@ export function AdminComments() {
     } finally {
       setProcessing(null);
     }
+  };
+
+  const handleReply = async (comment: AdminComment) => {
+    if (!replyContent.trim()) return;
+    setProcessing(comment.id);
+    try {
+      const reply = await replyToComment(comment.id, { content: replyContent.trim() });
+      setComments((prev) => [...prev, { ...reply, authorEmail: "", postSlug: comment.postSlug, postTitle: comment.postTitle }]);
+      setReplyContent(""); setReplyingTo(null);
+    } catch (err) { setError(err instanceof Error ? err.message : "回复失败"); }
+    finally { setProcessing(null); }
   };
 
   const pendingCount = comments.filter((c) => !c.approved).length;
@@ -190,6 +203,12 @@ export function AdminComments() {
                     {comment.content}
                   </p>
 
+                  {replyingTo === comment.id && (
+                    <div className="mb-[8px] flex gap-[6px]">
+                      <textarea value={replyContent} onChange={(e) => setReplyContent(e.target.value)} placeholder="以博主身份回复（直接公开）" maxLength={2000} className="min-h-[72px] flex-1 rounded-md border border-border/30 bg-background/50 px-[10px] py-[8px] text-[13px]" />
+                      <button onClick={() => handleReply(comment)} disabled={!replyContent.trim() || processing === comment.id} className="self-end rounded-md bg-foreground px-[10px] py-[7px] text-[12px] text-background disabled:opacity-40">发送</button>
+                    </div>
+                  )}
                   {/* 底部：文章链接 + 时间 */}
                   <div className="flex items-center gap-[8px] text-[11px] text-muted-foreground/30">
                     <Link
@@ -206,6 +225,11 @@ export function AdminComments() {
 
                 {/* 操作按钮 */}
                 <div className="flex items-center gap-[1px] shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                  {comment.approved && !comment.parentId && (
+                    <button onClick={() => { setReplyingTo(replyingTo === comment.id ? null : comment.id); setReplyContent(""); }} title="回复" className="p-[7px] rounded-md text-muted-foreground/30 hover:text-foreground">
+                      <Reply className="h-[14px] w-[14px]" />
+                    </button>
+                  )}
                   {!comment.approved && (
                     <button
                       onClick={() => handleApprove(comment.id)}

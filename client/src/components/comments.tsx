@@ -15,7 +15,7 @@ function avatarUrl(name: string, size = 40): string {
 function CommentItem({ comment }: { comment: CommentData }) {
   const { dateSettings } = useSiteSettings();
   return (
-    <div className="group flex gap-[12px] py-[16px]">
+    <div id={`comment-${comment.id}`} className={`group flex gap-[12px] py-[16px] ${comment.parentId ? "ml-[32px] border-l border-border/25 pl-[14px]" : ""}`}>
       <div className="shrink-0">
         <img
           src={avatarUrl(comment.authorName)}
@@ -92,7 +92,7 @@ function CommentForm({ slug, onSubmitted }: { slug: string; onSubmitted: () => v
         </div>
         <div>
           <label htmlFor="comment-email" className="mb-[4px] block text-[12px] font-medium text-muted-foreground/60">
-            邮箱 <span className="text-muted-foreground/30">（可选，用于头像）</span>
+            邮箱 <span className="text-muted-foreground/30">（可选，用于回复通知，不公开）</span>
           </label>
           <input
             id="comment-email"
@@ -217,9 +217,10 @@ export function CommentsSection({ slug }: { slug: string }) {
               </div>
             ) : comments.length > 0 ? (
               <div className="divide-y divide-border/20">
-                {comments.map((c) => (
-                  <CommentItem key={c.id} comment={c} />
-                ))}
+                {comments.filter((c) => !c.parentId).flatMap((parent) => [
+                  <CommentItem key={parent.id} comment={parent} />,
+                  ...comments.filter((reply) => reply.parentId === parent.id).map((reply) => <CommentItem key={reply.id} comment={reply} />),
+                ])}
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center py-[24px] text-center">

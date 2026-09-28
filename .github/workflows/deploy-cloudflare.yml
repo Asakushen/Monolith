@@ -1,16 +1,18 @@
 name: Cloudflare Deploy
 
-# ⚠️ 状态：待测试（尚未端到端验证）
-# 已知问题：
-#   - Windows 用户反馈本地直跑脚本卡在「应用远程数据库迁移」（v2.3.0 已通过 shell:true 修复）
-#   - CI 触发的端到端流程仍待主人验收
-# 推荐部署姿势：本机 `npm run deploy:cloudflare`（详见 README）
+# 手动触发的生产部署工作流（不覆盖业务 secret 的分步链路）：
+#   远程 D1 migrations → schema reconcile → Workers 部署 → Pages API_BASE → 前端构建 → Pages 部署 → 健康检查
+# ADMIN_PASSWORD / JWT_SECRET / REACTION_SALT 等业务 secret 全程不被触碰（无需配置为 Actions secret）。
+# 所需 Actions secret：
+#   CLOUDFLARE_API_TOKEN（必需）— Workers/Pages/D1 部署权限
+#   CLOUDFLARE_ACCOUNT_ID（可选）— wrangler.toml 已含 account_id 时可省略
+# 触发：Actions 页面手动运行；日常推送不自动部署（生产部署须明确下令）。
 
 on:
   workflow_dispatch:
     inputs:
-      branch:
-        description: 部署到哪个 Pages 分支
+      pages_branch:
+        description: Pages 部署目标分支（main=生产，dev=预览）
         required: true
         default: main
         type: choice
@@ -23,7 +25,7 @@ on:
         default: false
         type: boolean
       skip_server:
-        description: 跳过 Workers 部署
+        description: 跳过 Workers 后端部署
         required: true
         default: false
         type: boolean
@@ -33,36 +35,25 @@ on:
         default: false
         type: boolean
       api_base:
-        description: 手动指定 API_BASE（可留空自动探测）
+        description: 手动指定 API_BASE（留空则自动探测本次 Workers URL）
         required: false
         type: string
-  push:
-    branches:
-      - main
-    paths:
-      - client/**
-      - server/**
-      - scripts/deploy-cloudflare.mjs
-      - package.json
-      - package-lock.json
-      - .github/workflows/deploy-cloudflare.yml
 
 concurrency:
-  group: cloudflare-deploy-${{ github.ref_name }}
+  group: cloudflare-deploy
   cancel-in-progress: false
 
 jobs:
   deploy:
-    name: Deploy Monolith to Cloudflare
+    name: Deploy to Cloudflare (no-secret-overwrite)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      MONOLITH_API_BASE: ${{ github.event.inputs.api_base || '' }}
-      ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
-      JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      WRANGLER_SEND_METRICS: "false"
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -76,16 +67,79 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Deploy via scripted pipeline
+      - name: Preflight (token & inputs)
         run: |
-          args=(--pages-project monolith-client --branch "${TARGET_BRANCH}")
-          if [ "${SKIP_MIGRATE}" = "true" ]; then args+=(--skip-migrate); fi
-          if [ "${SKIP_SERVER}" = "true" ]; then args+=(--skip-server); fi
-          if [ "${SKIP_CLIENT}" = "true" ]; then args+=(--skip-client); fi
-          if [ -n "${MONOLITH_API_BASE}" ]; then args+=(--api-base "${MONOLITH_API_BASE}"); fi
-          npm run deploy:cloudflare -- "${args[@]}"
-        env:
-          TARGET_BRANCH: ${{ github.event.inputs.branch || 'main' }}
-          SKIP_MIGRATE: ${{ github.event.inputs.skip_migrate || 'false' }}
-          SKIP_SERVER: ${{ github.event.inputs.skip_server || 'false' }}
-          SKIP_CLIENT: ${{ github.event.inputs.skip_client || 'false' }}
+          if [ -z "${CLOUDFLARE_API_TOKEN}" ]; then
+            echo "::error::缺少 Actions secret CLOUDFLARE_API_TOKEN（Settings → Secrets and variables → Actions）"
+            exit 1
+          fi
+          echo "pages_branch=${{ inputs.pages_branch }}"
+          npx wrangler whoami
+
+      - name: Apply remote D1 migrations & reconcile
+        if: ${{ !inputs.skip_migrate }}
+        run: |
+          printf 'y\n' | npx wrangler d1 migrations apply monolith-db --remote
+          node ../scripts/reconcile-d1-schema.mjs --remote
+        working-directory: server
+
+      - name: Deploy Workers backend
+        if: ${{ !inputs.skip_server }}
+        run: |
+          npm run deploy:server 2>&1 | tee /tmp/deploy-server.log
+          WORKERS_URL="$(grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' /tmp/deploy-server.log | tail -1 || true)"
+          if [ -n "${WORKERS_URL}" ]; then
+            echo "WORKERS_URL=${WORKERS_URL}" >> "$GITHUB_ENV"
+            echo "Workers URL: ${WORKERS_URL}"
+          else
+            echo "::warning::未能从部署输出解析 workers.dev URL"
+          fi
+
+      - name: Resolve API_BASE
+        run: |
+          API_BASE="${{ inputs.api_base }}"
+          if [ -z "${API_BASE}" ]; then API_BASE="${WORKERS_URL}"; fi
+          if [ -z "${API_BASE}" ]; then
+            echo "::error::无法确定 API_BASE：请手动指定 api_base 输入，或不要跳过 Workers 部署"
+            exit 1
+          fi
+          echo "API_BASE=${API_BASE}" >> "$GITHUB_ENV"
+          echo "API_BASE=${API_BASE}"
+
+      - name: Set Pages API_BASE secret
+        if: ${{ !inputs.skip_client }}
+        run: |
+          if [ "${{ inputs.pages_branch }}" = "main" ]; then PAGES_ENV="production"; else PAGES_ENV="preview"; fi
+          printf '%s\n' "${API_BASE}" | npx wrangler pages secret put API_BASE --project-name monolith-client --env "${PAGES_ENV}"
+
+      - name: Build frontend
+        if: ${{ !inputs.skip_client }}
+        run: npm run build
+
+      - name: Deploy Pages frontend
+        if: ${{ !inputs.skip_client }}
+        run: |
+          npx wrangler pages deploy dist --project-name monolith-client \
+            --branch "${{ inputs.pages_branch }}" \
+            --commit-dirty=true \
+            --commit-message "deploy ${{ github.sha }}" 2>&1 | tee /tmp/pages-deploy.log
+          PAGES_URL="$(grep -oE 'https://[a-zA-Z0-9.-]+\.pages\.dev' /tmp/pages-deploy.log | tail -1 || true)"
+          if [ -n "${PAGES_URL}" ]; then echo "PAGES_URL=${PAGES_URL}" >> "$GITHUB_ENV"; fi
+        working-directory: client
+
+      - name: Post-deploy health check
+        if: ${{ !inputs.skip_client }}
+        run: |
+          BASE="${PAGES_URL:-https://monolith-client.pages.dev}"
+          fail=0
+          for path in / /robots.txt /sitemap.xml /rss.xml /api/health /api/friends; do
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "${BASE}${path}")"
+            echo "${code} ${BASE}${path}"
+            case "${code}" in 2*|3*) ;; *) fail=1 ;; esac
+          done
+          if [ -n "${WORKERS_URL}" ]; then
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "${WORKERS_URL}/api/health")"
+            echo "${code} ${WORKERS_URL}/api/health"
+            case "${code}" in 2*|3*) ;; *) fail=1 ;; esac
+          fi
+          exit "${fail}"

@@ -95,6 +95,7 @@ export function isWebsiteAllowed(origin: string | null | undefined, whitelist: s
   if (!origin) return false;
   let host = origin;
   try { host = new URL(origin).hostname; } catch { /* origin 已是 host */ }
-  const allowed = whitelist.split("|").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  // 支持竖线（部署变量）与换行（控制台多行输入）两种分隔
+  const allowed = whitelist.split(/[|\n]/).map((s) => s.trim().toLowerCase()).filter(Boolean);
   return allowed.some((d) => host.toLowerCase() === d || host.toLowerCase().endsWith("." + d));
 }

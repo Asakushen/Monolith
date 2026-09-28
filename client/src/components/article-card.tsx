@@ -6,6 +6,7 @@ import { ArrowRight, CalendarDays, FolderOpen, Pin } from "lucide-react";
 import type { CSSProperties } from "react";
 import { useSiteSettings } from "@/lib/site-settings";
 import { formatSiteDate } from "@/lib/date-format";
+import { tagHueClass } from "@/lib/tag-color";
 
 export function ArticleCard({ post }: { post: PostMeta }) {
   const { dateSettings } = useSiteSettings();
@@ -33,7 +34,7 @@ export function ArticleCard({ post }: { post: PostMeta }) {
         </Badge>
       )}
       {post.tags.slice(0, 2).map((tag) => (
-        <Badge key={tag} variant="secondary" className="h-[24px] rounded-[4px] px-[8px] text-[12px] font-normal tracking-normal">{tag}</Badge>
+        <Badge key={tag} variant="secondary" className={`tag-chip ${tagHueClass(tag)} h-[24px] rounded-[4px] px-[8px] text-[12px] font-normal tracking-normal`}>{tag}</Badge>
       ))}
       <span className="inline-flex items-center gap-[4px] text-[12px] text-muted-foreground/55">
         <CalendarDays className="h-[12px] w-[12px]" />
@@ -67,7 +68,7 @@ export function ArticleCard({ post }: { post: PostMeta }) {
       style={style}
     >
       <article
-        className={`relative flex min-h-[var(--article-card-height)] overflow-hidden rounded-md border border-border/20 bg-background/30 transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:-translate-y-[2px] hover:border-border/55 hover:bg-card/28 md:h-[var(--article-card-height)] ${isBackground ? "bg-card/18" : ""}`}
+        className={`relative glass-surface flex min-h-[var(--article-card-height)] overflow-hidden rounded-md border border-border/20 bg-background/30 transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:-translate-y-[2px] hover:border-border/55 hover:bg-card/28 md:h-[var(--article-card-height)] ${isBackground ? "bg-card/18" : ""}`}
       >
         {imageMode === "background" && (
           <>

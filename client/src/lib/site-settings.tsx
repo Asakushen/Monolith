@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { applySiteTheme, normalizeSiteThemeMode, normalizeSiteThemeStyle } from "@/lib/site-theme";
 
 export type SiteDatePrecision = "date" | "datetime" | "datetime_seconds";
 
@@ -30,8 +31,11 @@ export type PublicSiteSettings = {
   rss_enabled: string;
   custom_header: string;
   custom_footer: string;
+  custom_snippets: string;
   site_timezone: string;
   date_precision: string;
+  site_theme_mode: string;
+  site_theme_style: string;
 };
 
 const DEFAULT_SITE_SETTINGS: PublicSiteSettings = {
@@ -57,8 +61,11 @@ const DEFAULT_SITE_SETTINGS: PublicSiteSettings = {
   rss_enabled: "true",
   custom_header: "",
   custom_footer: "",
+  custom_snippets: "",
   site_timezone: "Asia/Shanghai",
   date_precision: "date",
+  site_theme_mode: "dark",
+  site_theme_style: "default",
 };
 
 type SiteSettingsContextValue = {
@@ -113,6 +120,27 @@ export function SiteSettingsProvider({ children }: { children: ReactNode }) {
     },
     ready,
   }), [ready, settings]);
+
+  // 公共设置就绪后应用全站主题（控制台「主题外观」的站点级设置）。
+  // ready 前不动作：保持 index.html 内联脚本按 cookie 设置的初始主题，避免默认暗色闪变。
+  useEffect(() => {
+    if (!ready) return;
+    applySiteTheme(
+      normalizeSiteThemeMode(settings.site_theme_mode),
+      normalizeSiteThemeStyle(settings.site_theme_style),
+    );
+  }, [ready, settings.site_theme_mode, settings.site_theme_style]);
+
+  // system 模式下跟随系统明暗变化
+  useEffect(() => {
+    if (!ready) return;
+    if (normalizeSiteThemeMode(settings.site_theme_mode) !== "system") return;
+    const style = normalizeSiteThemeStyle(settings.site_theme_style);
+    const mql = window.matchMedia("(prefers-color-scheme: dark)");
+    const handler = () => applySiteTheme("system", style);
+    mql.addEventListener("change", handler);
+    return () => mql.removeEventListener("change", handler);
+  }, [ready, settings.site_theme_mode, settings.site_theme_style]);
 
   return <SiteSettingsContext.Provider value={value}>{children}</SiteSettingsContext.Provider>;
 }

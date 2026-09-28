@@ -1,0 +1,4 @@
+# Cloudflare Pages 上传忽略清单（gitignore 语法）
+# 现代浏览器均优先使用 woff2（KaTeX_Size3 为内联 data:URI），旧格式字体不再上传
+*.ttf
+*.woff

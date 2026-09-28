@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="书写代码、设计与边缘计算的个人博客。在秩序与混沌的交界处，寻找属于自己的巨石碑。" />
-    <meta name="theme-color" content="#0a0a0f" />
+    <meta name="theme-color" content="#0d0b1a" />
     <meta name="application-name" content="浅草物语" />
 
     <!-- Open Graph 默认标签（SPA 首次抓取时的兜底） -->
@@ -28,31 +28,28 @@
     <link rel="alternate" type="application/rss+xml" title="浅草物语 RSS" href="/rss.xml" />
   </head>
   <body class="min-h-full flex flex-col font-sans bg-background text-foreground">
-    <!-- 主题初始化：在 React 加载前设置 data-theme / data-style，防止闪烁 -->
+    <!-- 主题初始化：控制台配置写入 cookie；浅草物语首次访问默认 fluid 暗色。 -->
     <script>
       (function(){
-        // 明暗模式（白名单校验，异常回退默认，防止非法值/存储阻断中断初始化）
-        var t = null;
-        try { t = localStorage.getItem('theme'); } catch (e) {}
-        var validModes = ['dark', 'light', 'system'];
-        var mode = validModes.indexOf(t) >= 0 ? t : 'dark';
-        var d = mode === 'system'
-          ? (window.matchMedia('(prefers-color-scheme:dark)').matches ? 'dark' : 'light')
-          : mode;
-        document.documentElement.setAttribute('data-theme', d);
-        // 视觉风格（多主题，白名单校验）
-        var st = null;
-        try { st = localStorage.getItem('monolith-theme-style'); } catch (e) {}
-        var validStyles = ['default', 'fluid'];
-        var style = validStyles.indexOf(st) >= 0 ? st : 'fluid';
-        document.documentElement.setAttribute('data-style', style);
-        // 同步 theme-color
-        var m = document.querySelector('meta[name="theme-color"]');
-        if (m) {
-          m.setAttribute('content', style === 'fluid'
-            ? (d === 'light' ? '#f6f4fb' : '#0d0b1a')
-            : (d === 'light' ? '#ffffff' : '#0a0a0f'));
+        var mode = 'dark', style = 'fluid';
+        var cached = document.cookie.match(/(?:^|;\s*)monolith_site_theme=([^;]+)/);
+        if (cached) {
+          try {
+            var parts = decodeURIComponent(cached[1]).split('|');
+            if (['dark', 'light', 'system'].indexOf(parts[0]) >= 0) mode = parts[0];
+            if (['default', 'fluid'].indexOf(parts[1]) >= 0) style = parts[1];
+          } catch (e) {}
         }
+        var effective = mode === 'system'
+          ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+          : mode;
+        document.documentElement.setAttribute('data-theme', effective);
+        document.documentElement.setAttribute('data-style', style);
+        var themeColor = style === 'fluid'
+          ? (effective === 'light' ? '#f6f4fb' : '#0d0b1a')
+          : (effective === 'light' ? '#ffffff' : '#0d1117');
+        var meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.setAttribute('content', themeColor);
       })();
     </script>
     <!-- LOCAL MOD: brand bootstrap — apply cached site title/icon before React to avoid Monolith flash -->

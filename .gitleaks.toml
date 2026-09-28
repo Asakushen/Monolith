@@ -1,0 +1,59 @@
+# gitleaks 自定义规则 — 补偿个人仓库缺失的 non-provider patterns 扫描
+# 背景：GitHub 的 "Scan for non-provider patterns" 仅对组织仓库开放；
+# 本文件在默认规则基础上补充 AI 密钥与带密码连接串等非提供商模式。
+# 运行位置：CI（.github/workflows/ci.yml 的 gitleaks job）+ CodeRabbit tools.gitleaks
+
+[extend]
+useDefault = true
+
+# ── Google 新版 API 密钥（AQ. 前缀，gitleaks 默认规则未覆盖）──
+[[rules]]
+id = "google-api-key-aq-format"
+description = "Google API Key (new AQ. format, e.g. Gemini)"
+regex = '''\bAQ\.[A-Za-z0-9_\-]{20,}'''
+keywords = ["AQ."]
+tags = ["key", "ai", "google"]
+
+# ── AI 服务商新形态密钥（openai sk-proj-/sk-svcacct-、anthropic sk-ant-）──
+[[rules]]
+id = "ai-provider-key-new-formats"
+description = "AI provider API key (sk-proj- / sk-svcacct- / sk-ant-)"
+regex = '''\bsk-(?:proj|svcacct|ant)-[A-Za-z0-9_\-]{20,}'''
+keywords = ["sk-proj-", "sk-svcacct-", "sk-ant-"]
+tags = ["key", "ai"]
+
+# ── Resend 邮件服务密钥 ──
+[[rules]]
+id = "resend-api-key"
+description = "Resend API key"
+regex = '''\bre_[A-Za-z0-9_]{30,}'''
+keywords = ["re_"]
+tags = ["key", "email"]
+
+# ── 带密码的数据库连接串（non-provider patterns 的核心项，Turso/PG 相关）──
+[[rules]]
+id = "db-connection-string-with-password"
+description = "Database connection string containing credentials"
+regex = '''\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|mariadb|redis|libsql|file)://[^\s:@/"']+:[^\s@/"']+@[^\s"']+'''
+tags = ["credential", "connection-string"]
+
+# ── 全局放行清单 ──
+[allowlist]
+description = "Placeholder values, docs examples, local-only files"
+paths = [
+  '''(^|/)node_modules/''',
+  '''(^|/)\.wrangler/''',
+  '''(^|/)dist/''',
+  '''(^|/)tmp/''',
+  '''(^|/)tests/output/''',
+  '''(^|/)\.dev\.vars$''',
+  '''(^|/)\.claude/''',
+  '''(^|/)\.codex/''',
+  '''(^|/)package-lock\.json$''',
+]
+regexes = [
+  '''(?i)REPLACE(_[A-Z0-9]+)+''',
+  '''(?i)(example|your|my|fake|dummy|test)[-_]?(key|token|secret|password)''',
+  '''(?i)placeholder''',
+  '''x{8,}''',
+]

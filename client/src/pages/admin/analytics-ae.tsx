@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { AEAnalyticsData } from "@/lib/api";
-import { Activity, CalendarClock, Clock, ExternalLink, Gauge, Globe, Hourglass, Languages, LogIn, LogOut, Monitor, MonitorSmartphone, Repeat, TrendingDown, TrendingUp, UserPlus, Users } from "lucide-react";
+import { getToken } from "@/lib/api";
+import { Activity, AlertTriangle, CalendarClock, CheckCircle2, Clock, ExternalLink, Gauge, Globe, Hourglass, Languages, LogIn, LogOut, Monitor, MonitorSmartphone, Repeat, Save, Shield, TrendingDown, TrendingUp, UserPlus, Users } from "lucide-react";
 
 function formatDuration(ms: number): string {
   if (!ms || ms <= 0) return "-";
@@ -12,6 +13,139 @@ function formatDuration(ms: number): string {
 }
 
 type ListItem = { name: string; count: number };
+
+type AEStatus = {
+  tokenConfigured: boolean;
+  accountConfigured: boolean;
+  aeBindingAvailable: boolean;
+};
+
+// AE 采集配置卡：状态检测（凭据留在 Workers secret/var）+ 控制台管理的白名单与采集开关
+export function AnalyticsAEConfigCard() {
+  const [status, setStatus] = useState<AEStatus | null>(null);
+  const [whitelist, setWhitelist] = useState("");
+  const [tracking, setTracking] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    Promise.allSettled([
+      fetch("/api/admin/ae-status", { headers: { Authorization: `Bearer ${getToken()}` } })
+        .then((res) => (res.ok ? res.json() as Promise<AEStatus> : null)),
+      fetch("/api/admin/settings", { headers: { Authorization: `Bearer ${getToken()}` } })
+        .then((res) => (res.ok ? res.json() as Promise<Record<string, string>> : null)),
+    ]).then(([statusResult, settingsResult]) => {
+      if (statusResult.status === "fulfilled" && statusResult.value) setStatus(statusResult.value);
+      if (settingsResult.status === "fulfilled" && settingsResult.value) {
+        setWhitelist(settingsResult.value.analytics_whitelist || "");
+        setTracking(settingsResult.value.ae_track_enabled !== "false");
+      }
+      setLoading(false);
+    });
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch("/api/admin/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify({ analytics_whitelist: whitelist, ae_track_enabled: tracking ? "true" : "false" }),
+      });
+      if (!res.ok) throw new Error("save failed");
+      setMessage("已保存，采集端约 15 秒内生效");
+    } catch {
+      setMessage("保存失败，请重试");
+    } finally {
+      setSaving(false);
+      setTimeout(() => setMessage(""), 3000);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="analytics-section">
+        <div className="analytics-section__title"><Shield className="h-[14px] w-[14px]" />AE 采集配置</div>
+        <p className="px-[4px] py-[12px] text-[12px] text-muted-foreground/40">配置加载中...</p>
+      </div>
+    );
+  }
+
+  const credentialsMissing = Boolean(status && (!status.tokenConfigured || !status.accountConfigured));
+
+  return (
+    <div className="analytics-section">
+      <div className="analytics-section__title">
+        <Shield className="h-[14px] w-[14px]" />
+        AE 采集配置
+        <span className="ml-auto flex items-center gap-[10px]">
+          {message && <span className="text-[11px] font-normal text-muted-foreground/60">{message}</span>}
+          <button
+            type="button"
+            onClick={save}
+            disabled={saving}
+            className="inline-flex min-h-[32px] items-center gap-[6px] rounded-md bg-foreground px-[10px] text-[12px] font-medium text-background disabled:opacity-50"
+          >
+            <Save className="h-[12px] w-[12px]" />
+            {saving ? "保存中..." : "保存"}
+          </button>
+        </span>
+      </div>
+
+      <div className="analytics-quality-grid">
+        <div>
+          <span className="analytics-card__label">查询凭据 API Token</span>
+          <strong>{status?.tokenConfigured ? "已配置" : "未配置"}</strong>
+          <p>{status?.tokenConfigured ? "Workers secret CLOUDFLARE_API_TOKEN 就绪" : "npx wrangler secret put CLOUDFLARE_API_TOKEN --name monolith-server（需 Account Analytics:Read 权限）"}</p>
+        </div>
+        <div>
+          <span className="analytics-card__label">账户 ID</span>
+          <strong>{status?.accountConfigured ? "已配置" : "未配置"}</strong>
+          <p>AE GraphQL 查询用；wrangler.toml [vars] CLOUDFLARE_ACCOUNT_ID</p>
+        </div>
+        <div>
+          <span className="analytics-card__label">AE 数据集绑定</span>
+          <strong>{status?.aeBindingAvailable ? "可用" : "不可用"}</strong>
+          <p>{status?.aeBindingAvailable ? "wrangler.toml analytics_engine_datasets 绑定正常" : "Turso / PostgreSQL 部署无 AE 绑定，采集静默跳过"}</p>
+        </div>
+      </div>
+
+      {credentialsMissing && (
+        <div className="mb-[14px] flex gap-[8px] rounded-md border border-amber-500/20 bg-amber-500/5 px-[12px] py-[10px] text-[11px] leading-[1.6] text-amber-400/80">
+          <AlertTriangle className="mt-[1px] h-[13px] w-[13px] shrink-0" />
+          <span>AE 查询凭据未配置时，下方高级维度无法展示（采集不受影响）。出于安全红线，查询令牌只通过 Workers secret 注入，控制台不保存任何密钥明文。</span>
+        </div>
+      )}
+
+      <div className="flex items-center justify-between rounded-md border border-border/14 bg-background/25 px-[12px] py-[10px]">
+        <div>
+          <div className="text-[12px] font-medium text-foreground/85">访客统计采集</div>
+          <div className="mt-[2px] text-[11px] text-muted-foreground/50">{tracking ? "开启状态，/api/track 正常上报 AE" : "已关闭，/api/track 静默返回 204"}</div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setTracking((prev) => !prev)}
+          className="min-h-[36px] rounded-md border border-border/25 px-[10px] text-[12px] text-muted-foreground/80 hover:text-foreground"
+        >
+          {tracking ? "关闭" : "开启"}
+        </button>
+      </div>
+
+      <div className="mt-[12px]">
+        <label className="mb-[6px] block text-[11px] font-medium uppercase tracking-normal text-muted-foreground/45">采集站点白名单</label>
+        <textarea
+          value={whitelist}
+          onChange={(e) => setWhitelist(e.target.value)}
+          placeholder={"example.com\nblog.example.org"}
+          rows={3}
+          className="settings-input min-h-[88px] resize-y py-[10px] font-mono text-[12px] leading-[1.6]"
+        />
+        <p className="mt-[6px] text-[11px] leading-[1.55] text-muted-foreground/35">每行一个域名，主域自动匹配子域；留空时回退部署变量 ANALYTICS_WEBSITE_WHITELIST，两者皆空则放行所有站点。</p>
+      </div>
+    </div>
+  );
+}
 
 // PV/UV 双系列趋势图：折线 + 数据点 + 网格线
 function DualTrendChart({ data, maxValue }: { data: { date: string; count: number; uv: number }[]; maxValue: number }) {

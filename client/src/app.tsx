@@ -1,6 +1,5 @@
 import { Route, Switch, useLocation } from "wouter";
 import { useEffect, Suspense, lazy } from "react";
-import DOMPurify from "dompurify";
 import { Navbar } from "@/components/navbar";
 import { Footer } from "@/components/footer";
 import { SearchOverlay } from "@/components/search";
@@ -9,6 +8,13 @@ import { AdminLayout } from "@/components/admin-layout";
 import { CookieConsent, getCookieConsent } from "@/components/cookie-consent";
 import { trackPageview, bindUnloadTracker } from "@/lib/analytics";
 import { useSiteSettings } from "@/lib/site-settings";
+import {
+  parseCustomSnippets,
+  legacyToSnippets,
+  snippetAppliesTo,
+  injectSnippetList,
+  removeCustomInjection,
+} from "@/lib/custom-injection";
 
 // 代码分割 (Code Splitting)
 const HomePage = lazy(() => import("@/pages/home").then((m) => ({ default: m.HomePage })));
@@ -35,81 +41,16 @@ const DynamicPage = lazy(() => import("@/pages/dynamic-page").then((m) => ({ def
 const NotFoundPage = lazy(() => import("@/pages/not-found").then((m) => ({ default: m.NotFoundPage })));
 
 
-const CUSTOM_INJECTION_SANITIZE_CONFIG = {
-  ADD_TAGS: ["script"],
-  ADD_ATTR: ["src", "async", "defer"],
-  FORBID_TAGS: ["style", "iframe", "object", "embed", "form"],
-  FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover", "onfocus", "onblur"],
-};
-
-function sanitizeCustomHtml(html: string) {
-  return DOMPurify.sanitize(html, CUSTOM_INJECTION_SANITIZE_CONFIG);
-}
-
-/** 将设置中的 HTML/JS 代码安全注入到页面（仅允许外部脚本 src） */
-function injectHtml(container: HTMLElement, html: string) {
-  const temp = document.createElement("div");
-  temp.innerHTML = sanitizeCustomHtml(html);
-  Array.from(temp.childNodes).forEach((node) => {
-    if (node instanceof HTMLScriptElement) {
-      if (!node.src) return; // 禁止内联脚本，只允许带 src 的外部脚本
-      const script = document.createElement("script");
-      script.src = node.src;
-      if (node.hasAttribute("async")) script.async = true;
-      if (node.hasAttribute("defer")) script.defer = true;
-      container.appendChild(script);
-    } else {
-      container.appendChild(node.cloneNode(true));
-    }
-  });
-}
-
-const EXTERNAL_RESOURCE_TAGS = new Set(["audio", "embed", "img", "link", "object", "script", "source", "track", "video"]);
-
-function isExternalResourceUrl(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("data:") || trimmed.startsWith("blob:")) return false;
-
-  try {
-    const url = new URL(trimmed, window.location.href);
-    return (url.protocol === "http:" || url.protocol === "https:") && url.origin !== window.location.origin;
-  } catch {
-    return false;
-  }
-}
-
-function hasExternalResources(html: string) {
-  const temp = document.createElement("div");
-  temp.innerHTML = sanitizeCustomHtml(html);
-  return Array.from(temp.querySelectorAll<HTMLElement>("*")).some((node) => {
-    const tagName = node.tagName.toLowerCase();
-    if (EXTERNAL_RESOURCE_TAGS.has(tagName)) {
-      return ["src", "href", "poster", "data"].some((attribute) => {
-        const value = node.getAttribute(attribute);
-        return value ? isExternalResourceUrl(value) : false;
-      });
-    }
-
-    const style = node.getAttribute("style");
-    return Boolean(style && /url\(\s*["']?(?:https?:|\/\/)/i.test(style));
-  });
-}
-
-function removeCustomInjection() {
-  document.querySelectorAll("[data-monolith-custom-injection=\"true\"]").forEach((node) => node.remove());
-}
-
-/** LOCAL MOD: public brand cache key — early bootstrap in index.html reads this before React. */
 const PUBLIC_BRAND_CACHE_KEY = "monolith_public_brand";
 
 function setMetaContent(attr: "name" | "property", key: string, content: string) {
-  let el = document.querySelector(`meta[${attr}="${key}"]`) as HTMLMetaElement | null;
-  if (!el) {
-    el = document.createElement("meta");
-    el.setAttribute(attr, key);
-    document.head.appendChild(el);
+  let element = document.querySelector(`meta[${attr}="${key}"]`) as HTMLMetaElement | null;
+  if (!element) {
+    element = document.createElement("meta");
+    element.setAttribute(attr, key);
+    document.head.appendChild(element);
   }
-  el.setAttribute("content", content);
+  element.setAttribute("content", content);
 }
 
 function setIconHref(rel: string, href: string) {
@@ -119,55 +60,36 @@ function setIconHref(rel: string, href: string) {
     link.rel = rel;
     document.head.appendChild(link);
   }
-  // Drop incorrect type from static shell when switching to remote/custom icons
   link.removeAttribute("type");
   link.href = href;
 }
 
-/**
- * LOCAL MOD: always sync title/icon from settings (not only when title starts with Monolith),
- * and persist for next paint via localStorage so SPA reopen has zero brand flash.
- */
+/** Keep the public shell and next first paint aligned with D1 branding. */
 function syncDocumentBrand(settings: { site_title?: string; site_description?: string; site_icon?: string }) {
-  const siteTitle = settings.site_title?.trim();
+  const siteTitle = settings.site_title?.trim() || "浅草物语";
   const description = settings.site_description?.trim();
-  const icon = settings.site_icon?.trim();
+  const icon = settings.site_icon?.trim() || "/favicon.png";
+  const current = document.title || "";
+  const looksGeneric =
+    !current
+    || current === "浅草物语"
+    || current === "Monolith"
+    || current.startsWith("Monolith")
+    || current.startsWith("浅草物语 —")
+    || current.startsWith("浅草物语 |")
+    || current === siteTitle
+    || (description ? current === `${siteTitle} — ${description}` : false);
 
-  if (siteTitle) {
-    // Only replace generic/home titles; leave article titles ("xxx | 站名") alone.
-    const current = document.title || "";
-    const looksGeneric =
-      !current ||
-      current === "浅草物语" ||
-      current === "Monolith" ||
-      current.startsWith("Monolith") ||
-      current.startsWith("浅草物语 —") ||
-      current.startsWith("浅草物语 |") ||
-      current === siteTitle ||
-      (description ? current === `${siteTitle} — ${description}` : false);
-
-    if (looksGeneric) {
-      document.title = description ? `${siteTitle} — ${description}` : siteTitle;
-    }
-
-    setMetaContent("name", "application-name", siteTitle);
-    setMetaContent("property", "og:site_name", siteTitle);
-  }
-
-  if (icon) {
-    setIconHref("icon", icon);
-    setIconHref("apple-touch-icon", icon);
-  }
+  if (looksGeneric) document.title = description ? `${siteTitle} — ${description}` : siteTitle;
+  setMetaContent("name", "application-name", siteTitle);
+  setMetaContent("property", "og:site_name", siteTitle);
+  setIconHref("icon", icon);
+  setIconHref("apple-touch-icon", icon);
 
   try {
-    const cached = {
-      title: siteTitle || "浅草物语",
-      icon: icon || "/favicon.png",
-      updatedAt: Date.now(),
-    };
-    localStorage.setItem(PUBLIC_BRAND_CACHE_KEY, JSON.stringify(cached));
+    localStorage.setItem(PUBLIC_BRAND_CACHE_KEY, JSON.stringify({ title: siteTitle, icon, updatedAt: Date.now() }));
   } catch {
-    // private mode / blocked storage — ignore
+    // Private mode or blocked storage: current render still remains correctly branded.
   }
 }
 
@@ -192,55 +114,23 @@ export function App() {
   const isAdminArea = isAdminRoot && !isEditorPage && !isLoginPage;
   const isPublicPage = !isAdminRoot;
 
-  // 注入自定义 header/footer 代码（需 Cookie 同意后加载第三方脚本）
+  // 注入自定义片段：按位置与作用域过滤；开启同意且含外部资源的片段，等访客同意后再加载
   useEffect(() => {
     removeCustomInjection();
     if (isAdminRoot || !siteSettingsReady) return undefined;
 
-    let cancelled = false;
-    let cleanupConsentListener: (() => void) | undefined;
+    syncDocumentBrand(settings);
 
-    const s = settings;
-    syncDocumentBrand(s);
-    const hasExternalResource = [s.custom_header, s.custom_footer]
-      .some((html) => Boolean(html && hasExternalResources(html)));
+    const parsed = parseCustomSnippets(settings.custom_snippets);
+    const active = (parsed ?? legacyToSnippets(settings.custom_header, settings.custom_footer))
+      .filter((snippet) => snippet.enabled && snippetAppliesTo(snippet, location || "/"));
 
-    const inject = () => {
-      if (cancelled) return;
-      removeCustomInjection();
-      if (s.custom_header) {
-        const container = document.createElement("div");
-        container.id = "monolith-custom-header";
-        injectHtml(container, s.custom_header);
-        Array.from(container.childNodes).forEach((n) => {
-          if (n instanceof HTMLElement) n.dataset.monolithCustomInjection = "true";
-          document.head.appendChild(n);
-        });
-      }
-      if (s.custom_footer) {
-        const container = document.createElement("div");
-        container.id = "monolith-custom-footer";
-        container.dataset.monolithCustomInjection = "true";
-        injectHtml(container, s.custom_footer);
-        document.body.appendChild(container);
-      }
-    };
-
-    // 无外部资源则直接注入；有则等 Cookie 同意，避免未同意时发起第三方请求
-    if (!hasExternalResource) {
-      inject();
-    } else if (getCookieConsent()) {
-      inject();
-    } else {
-      window.addEventListener("cookie-consent-accepted", inject, { once: true });
-      cleanupConsentListener = () => window.removeEventListener("cookie-consent-accepted", inject);
-    }
+    const cleanupConsent = injectSnippetList(active, getCookieConsent());
     return () => {
-      cancelled = true;
-      cleanupConsentListener?.();
+      cleanupConsent();
       removeCustomInjection();
     };
-  }, [isAdminRoot, settings, siteSettingsReady]);
+  }, [isAdminRoot, location, settings, siteSettingsReady]);
 
   return (
     <>

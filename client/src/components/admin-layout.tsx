@@ -17,7 +17,6 @@ import {
   Search,
   X,
 } from "lucide-react";
-import { ThemeToggle } from "@/components/theme-toggle";
 
 interface AdminLayoutProps {
   children: React.ReactNode;
@@ -93,10 +92,6 @@ export function AdminLayout({ children }: AdminLayoutProps) {
 
   const SidebarFooter = () => (
     <div className="space-y-[2px] border-t border-border/20 p-[12px]">
-      <div className="flex min-h-[44px] items-center justify-between px-[12px] py-[8px]">
-        <span className="text-[13px] font-medium text-muted-foreground/55">主题</span>
-        <ThemeToggle placement="top" />
-      </div>
       <button
         onClick={handleLogout}
         className="flex min-h-[44px] w-full items-center gap-[10px] rounded-md px-[12px] py-[8px] text-[13px] font-medium text-red-500/70 transition-colors hover:bg-red-500/10 hover:text-red-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
@@ -216,7 +211,6 @@ export function AdminLayout({ children }: AdminLayoutProps) {
             <span>Admin</span>
           </div>
           <div className="flex items-center gap-[4px]">
-            <ThemeToggle />
             <a
               href="/"
               target="_blank"
@@ -254,7 +248,6 @@ export function AdminLayout({ children }: AdminLayoutProps) {
               <ExternalLink className="h-[13px] w-[13px]" />
               查看站点
             </a>
-            <ThemeToggle />
           </div>
         </div>
         {children}

@@ -14,6 +14,10 @@ type SeoSettings = {
   rss_enabled: string;
   custom_header: string;
   custom_footer: string;
+  robots_extra_rules: string;
+  robots_default_block: string;
+  sitemap_include_archive: string;
+  sitemap_extra_urls: string;
 };
 
 type QuickDraft = {
@@ -32,6 +36,10 @@ const defaultSeoSettings: SeoSettings = {
   rss_enabled: "true",
   custom_header: "",
   custom_footer: "",
+  robots_extra_rules: "",
+  robots_default_block: "true",
+  sitemap_include_archive: "true",
+  sitemap_extra_urls: "",
 };
 
 function scoreTone(score: number) {
@@ -623,6 +631,50 @@ export function AdminSeo() {
                   {settings.rss_enabled === "false" ? "开启" : "关闭"}
                 </button>
               </div>
+              <div className="flex items-center justify-between rounded-md border border-border/14 bg-background/25 px-[12px] py-[10px]">
+                <div>
+                  <div className="text-[12px] font-medium text-foreground/85">robots 默认屏蔽</div>
+                  <div className="mt-[2px] text-[11px] text-muted-foreground/50">{settings.robots_default_block === "false" ? "未屏蔽后台路径" : "Disallow: /admin 与 /api/admin"}</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSettings((prev) => ({ ...prev, robots_default_block: prev.robots_default_block === "false" ? "true" : "false" }))}
+                  className="min-h-[36px] rounded-md border border-border/25 px-[10px] text-[12px] text-muted-foreground/80 hover:text-foreground"
+                >
+                  {settings.robots_default_block === "false" ? "开启" : "关闭"}
+                </button>
+              </div>
+              <div className="flex items-center justify-between rounded-md border border-border/14 bg-background/25 px-[12px] py-[10px]">
+                <div>
+                  <div className="text-[12px] font-medium text-foreground/85">sitemap 收录归档页</div>
+                  <div className="mt-[2px] text-[11px] text-muted-foreground/50">{settings.sitemap_include_archive === "false" ? "已从 /sitemap.xml 移除" : "包含 /archive 条目"}</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSettings((prev) => ({ ...prev, sitemap_include_archive: prev.sitemap_include_archive === "false" ? "true" : "false" }))}
+                  className="min-h-[36px] rounded-md border border-border/25 px-[10px] text-[12px] text-muted-foreground/80 hover:text-foreground"
+                >
+                  {settings.sitemap_include_archive === "false" ? "开启" : "关闭"}
+                </button>
+              </div>
+              <SettingsField
+                label="robots 追加规则"
+                value={settings.robots_extra_rules}
+                onChange={(value) => setSettings((prev) => ({ ...prev, robots_extra_rules: value }))}
+                placeholder={"Disallow: /tag/private\nCrawl-delay: 10"}
+                multiline
+                mono
+                hint="每行一条，支持 Allow / Disallow / User-agent / Crawl-delay / Sitemap；# 开头为注释，其他行会被忽略。"
+              />
+              <SettingsField
+                label="sitemap 额外 URL"
+                value={settings.sitemap_extra_urls}
+                onChange={(value) => setSettings((prev) => ({ ...prev, sitemap_extra_urls: value }))}
+                placeholder={"/friends\nhttps://example.com/landing"}
+                multiline
+                mono
+                hint="每行一个，支持绝对地址或以 / 开头的相对路径；与文章、页面重复的地址会自动去重。"
+              />
             </div>
           </section>
 

@@ -225,7 +225,7 @@ export function AdminComments() {
                 </div>
 
                 {/* 操作按钮 */}
-                <div className="flex items-center gap-[1px] shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="flex items-center gap-[1px] shrink-0 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
                   {comment.approved && !comment.parentId && (
                     <button onClick={() => { setReplyingTo(replyingTo === comment.id ? null : comment.id); setReplyContent(""); }} title="回复" className="p-[7px] rounded-md text-muted-foreground/30 hover:text-foreground">
                       <Reply className="h-[14px] w-[14px]" />

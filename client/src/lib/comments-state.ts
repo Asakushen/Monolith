@@ -19,6 +19,21 @@ export function buildCommentForest<T extends CommentTreeItem>(comments: T[]): Co
     if (parent && parent !== node) parent.children.push(node);
     else roots.push(node);
   }
+
+  const reachable = new Set<number>();
+  const visit = (node: CommentTreeNode<T>) => {
+    if (reachable.has(node.comment.id)) return;
+    reachable.add(node.comment.id);
+    node.children.forEach(visit);
+  };
+  roots.forEach(visit);
+  for (const comment of comments) {
+    if (!reachable.has(comment.id)) {
+      const node = nodes.get(comment.id)!;
+      roots.push(node);
+      visit(node);
+    }
+  }
   return roots;
 }
 

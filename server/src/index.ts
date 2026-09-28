@@ -6,7 +6,8 @@
 
 import { Hono } from "hono";
 import { buildCommentReplyEmail, shouldNotifyCommentReply } from "./comment-notifications";
-import { toCommentReplyErrorResponse } from "./comment-reply-errors";
+import { toCommentReplyErrorResponse, toPublicCommentSubmissionErrorResponse } from "./comment-reply-errors";
+import { parsePublicCommentInput } from "./public-comment-input";
 import { cors } from "hono/cors";
 import { sign, verify } from "hono/jwt";
 import type { Context } from "hono";
@@ -690,29 +691,27 @@ app.get("/api/posts/:slug/comments", async (c) => {
 
 // 提交评论（公开接口，需审核后才显示）
 app.post("/api/posts/:slug/comments", async (c) => {
+  const ip = getClientIp(c);
+  const rateLimits = await getRateLimitSettings(c.get("db"));
+  if (isRateLimited(commentAttempts, ip, Date.now(), rateLimits.comment)) {
+    return c.json({ error: "提交过于频繁，请稍后再试" }, 429);
+  }
+
   const slug = c.req.param("slug");
-  const parsed = await readJson<{
-    authorName: string;
-    authorEmail?: string;
-    content: string;
-    parentId?: number;
-    _hp?: string; // honeypot 反垃圾字段
-  }>(c);
+  const parsed = await readJson<Record<string, unknown>>(c);
   if (!parsed.ok) return parsed.response;
   const body = parsed.body;
 
   // Honeypot 反垃圾：如果隐藏字段被填写，静默拒绝
-  if (body._hp) return c.json({ success: true, message: "评论已提交，等待审核" });
+  if (typeof body._hp === "string" && body._hp.length > 0) {
+    return c.json({ success: true, message: "评论已提交，等待审核" });
+  }
 
-  if (!body.authorName?.trim() || !body.content?.trim()) {
-    return c.json({ error: "昵称和评论内容不能为空" }, 400);
+  const validated = parsePublicCommentInput(body);
+  if (!validated.ok) {
+    return c.json({ error: validated.error }, 400);
   }
-  if (body.content.length > 2000) {
-    return c.json({ error: "评论内容不能超过 2000 字" }, 400);
-  }
-  if (body.parentId != null && (!Number.isInteger(body.parentId) || body.parentId <= 0)) {
-    return c.json({ error: "无效的回复目标" }, 400);
-  }
+  const commentInput = validated.value;
 
   const db = c.get("db");
   const post = await db.getPostBySlug(slug);
@@ -720,10 +719,10 @@ app.post("/api/posts/:slug/comments", async (c) => {
   try {
     await db.addComment({
       postSlug: slug,
-      authorName: body.authorName.trim(),
-      authorEmail: body.authorEmail?.trim() || "",
-      content: body.content.trim(),
-      parentId: body.parentId ?? null,
+      authorName: commentInput.authorName,
+      authorEmail: commentInput.authorEmail,
+      content: commentInput.content,
+      parentId: commentInput.parentId,
     });
     
     // 异步触发评论提醒邮件（Resend/Webhook）：收件人与发件人支持控制台配置
@@ -732,15 +731,16 @@ app.post("/api/posts/:slug/comments", async (c) => {
     await sendEmail(c, {
       to: adminEmail,
       subject: `[Monolith] 新评论待审核: ${slug}`,
-      html: `<p><strong>${escHtml(body.authorName.trim())}</strong> 刚刚在文章 <code>${escHtml(slug)}</code> 提交了评论：</p>
-             <blockquote style="border-left: 4px solid #eee; padding-left: 10px; color: #555;">${escHtml(body.content.trim())}</blockquote>
-             <p>邮箱: ${escHtml(body.authorEmail?.trim() || "无")}</p>
+      html: `<p><strong>${escHtml(commentInput.authorName)}</strong> 刚刚在文章 <code>${escHtml(slug)}</code> 提交了评论：</p>
+             <blockquote style="border-left: 4px solid #eee; padding-left: 10px; color: #555;">${escHtml(commentInput.content)}</blockquote>
+             <p>邮箱: ${escHtml(commentInput.authorEmail || "无")}</p>
              <p><a href="${siteOrigin}/admin/comments">前往后台审核</a></p>`,
     });
 
-    return c.json({ success: true, message: body.parentId ? "回复已提交，审核通过后公开" : "评论已提交，等待审核" });
+    return c.json({ success: true, message: commentInput.parentId ? "回复已提交，审核通过后公开" : "评论已提交，等待审核" });
   } catch (err) {
-    return c.json({ error: err instanceof Error ? err.message : "提交失败" }, 400);
+    const failure = toPublicCommentSubmissionErrorResponse(err, { isReply: commentInput.parentId != null });
+    return c.json({ error: failure.error }, failure.status);
   }
 });
 
@@ -1121,6 +1121,7 @@ type AttemptRecord = { count: number; firstAttempt: number };
 const loginAttempts = new Map<string, AttemptRecord>();
 const friendLinkAttempts = new Map<string, AttemptRecord>();
 const guestbookAttempts = new Map<string, AttemptRecord>();
+const commentAttempts = new Map<string, AttemptRecord>();
 const RATE_LIMIT_MAX_KEYS = 1000;
 
 function clampIntSetting(value: string | undefined, min: number, max: number, fallback: number): number {
@@ -1134,6 +1135,7 @@ let rateLimitSettingsCache: {
   login: RateLimitRule;
   friendLink: RateLimitRule;
   guestbook: RateLimitRule;
+  comment: RateLimitRule;
   fetchedAt: number;
 } | null = null;
 const RATE_LIMIT_SETTINGS_TTL = 15_000;
@@ -1157,6 +1159,10 @@ async function getRateLimitSettings(db: IDatabase) {
     guestbook: {
       limit: clampIntSetting(settings.guestbook_rate_limit, 1, 100, 5),
       windowMs: clampIntSetting(settings.guestbook_rate_window_hours, 1, 720, 1) * 3_600_000,
+    },
+    comment: {
+      limit: clampIntSetting(settings.comment_rate_limit, 1, 100, 3),
+      windowMs: clampIntSetting(settings.comment_rate_window_minutes, 1, 1440, 5) * 60_000,
     },
     fetchedAt: now,
   };

@@ -7,6 +7,7 @@ import { createClient } from "@libsql/client";
 import { TursoAdapter } from "../src/storage/db/turso.ts";
 import { createDatabase } from "../src/storage/factory.ts";
 import { toCommentReplyErrorResponse } from "../src/comment-reply-errors.ts";
+import { parsePublicCommentInput } from "../src/public-comment-input.ts";
 
 test("Turso allows arbitrary-depth approved admin replies", async () => {
   const directory = await mkdtemp(join(tmpdir(), "monolith-comment-replies-"));
@@ -123,4 +124,47 @@ test("ineligible parents retain a specific client error", () => {
 
   assert.deepEqual(result, { error: "只能回复同一文章中已审核的评论", status: 400 });
   assert.equal(logged.length, 0);
+});
+
+test("public comment input is type-checked and normalized", () => {
+  assert.deepEqual(parsePublicCommentInput({
+    authorName: "  Reader  ",
+    authorEmail: "  reader@example.com  ",
+    content: "  Hello  ",
+    parentId: 12,
+  }), {
+    ok: true,
+    value: { authorName: "Reader", authorEmail: "reader@example.com", content: "Hello", parentId: 12 },
+  });
+
+  for (const input of [
+    { authorName: 42, content: "Hello" },
+    { authorName: "Reader", authorEmail: 42, content: "Hello" },
+    { authorName: "Reader", content: {} },
+  ]) {
+    assert.equal(parsePublicCommentInput(input).ok, false);
+  }
+});
+
+test("public comment input rejects oversized fields rather than truncating them", () => {
+  const cases = [
+    [{ authorName: "a".repeat(51), content: "Hello" }, "昵称不能超过 50 字"],
+    [{ authorName: "Reader", authorEmail: `${"a".repeat(89)}@example.com`, content: "Hello" }, "邮箱不能超过 100 字"],
+    [{ authorName: "Reader", content: "a".repeat(2001) }, "评论内容不能超过 2000 字"],
+  ] as const;
+
+  for (const [input, error] of cases) {
+    assert.deepEqual(parsePublicCommentInput(input), { ok: false, error });
+  }
+});
+
+test("public comment input validates optional email and safe positive parent ids", () => {
+  assert.deepEqual(parsePublicCommentInput({ authorName: "Reader", authorEmail: "bad", content: "Hello" }), { ok: false, error: "邮箱格式无效" });
+  for (const parentId of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, "1", null]) {
+    assert.deepEqual(parsePublicCommentInput({ authorName: "Reader", content: "Hello", parentId }), { ok: false, error: "无效的回复目标" });
+  }
+  assert.deepEqual(parsePublicCommentInput({ authorName: "Reader", content: "Hello" }), {
+    ok: true,
+    value: { authorName: "Reader", authorEmail: "", content: "Hello", parentId: null },
+  });
 });

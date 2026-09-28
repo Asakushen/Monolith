@@ -36,6 +36,29 @@ test("buildCommentForest preserves arbitrary depth and orphans visibly", () => {
 });
 
 
+test("buildCommentForest surfaces every comment in a multi-node cycle", () => {
+  const comments = [
+    { id: 1, parentId: 2 },
+    { id: 2, parentId: 3 },
+    { id: 3, parentId: 1 },
+    { id: 4, parentId: null },
+  ];
+
+  const forest = buildCommentForest(comments);
+  const visited = new Set<number>();
+  const visit = (nodes: typeof forest) => {
+    for (const node of nodes) {
+      if (visited.has(node.comment.id)) continue;
+      visited.add(node.comment.id);
+      visit(node.children);
+    }
+  };
+  visit(forest);
+
+  assert.deepEqual([...visited].sort((a, b) => a - b), [1, 2, 3, 4]);
+});
+
+
 test("comment indentation stops increasing after four nested levels", () => {
   assert.deepEqual([0, 1, 2, 3, 4, 5, 10].map(commentIndentStep), [0, 10, 10, 10, 10, 0, 0]);
 });

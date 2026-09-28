@@ -41,6 +41,8 @@ export async function createDatabase(env: Record<string, unknown>): Promise<IDat
         throw new Error("Turso 配置不完整，需要设置: TURSO_URL（可选: TURSO_AUTH_TOKEN）");
       }
 
+      // This adapter has historically reconciled its full schema on creation;
+      // comment replies follow that existing lifecycle rather than adding a new path.
       const { TursoAdapter } = await import("./db/turso");
       const adapter = new TursoAdapter(url, authToken);
       await adapter.ensureCoreTables();
@@ -56,6 +58,7 @@ export async function createDatabase(env: Record<string, unknown>): Promise<IDat
         );
       }
 
+      // Keep parity with Turso: the existing factory lifecycle owns full-table DDL.
       const { PostgresAdapter } = await import("./db/postgres");
       const adapter = new PostgresAdapter(connectionString);
       await adapter.ensureCoreTables();

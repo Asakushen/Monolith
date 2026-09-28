@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useSiteSettings } from "@/lib/site-settings";
+import { removeCommentThread } from "@/lib/comments-state";
 import { formatSiteDate } from "@/lib/date-format";
 
 type FilterType = "all" | "pending" | "approved";
@@ -57,7 +58,7 @@ export function AdminComments() {
     setProcessing(id);
     try {
       await deleteComment(id);
-      setComments((prev) => prev.filter((c) => c.id !== id));
+      setComments((prev) => removeCommentThread(prev, id));
     } catch (err) {
       console.error(err);
     } finally {

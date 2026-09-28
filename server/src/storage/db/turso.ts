@@ -966,9 +966,9 @@ export class TursoAdapter implements IDatabase {
 
   async addCommentReply(parentId: number, input: Pick<CreateCommentInput, "authorName" | "content">) {
     await this.ensureCommentsTable();
-    const found = await this.db.run(sql`SELECT c.*, p.slug AS post_slug, p.title AS post_title FROM comments c INNER JOIN posts p ON c.post_id = p.id WHERE c.id = ${parentId} AND c.approved = 1 LIMIT 1`);
+    const found = await this.db.run(sql`SELECT c.*, p.slug AS post_slug, p.title AS post_title FROM comments c INNER JOIN posts p ON c.post_id = p.id WHERE c.id = ${parentId} AND c.approved = 1 AND c.parent_id IS NULL LIMIT 1`);
     const row = found.rows?.[0] as Record<string, unknown> | undefined;
-    if (!row) throw new Error("只能回复已审核的评论");
+    if (!row) throw new Error("只能回复已审核的一级评论");
     const [created] = await this.db.insert(comments).values({ postId: Number(row.post_id), authorName: input.authorName, authorEmail: "", content: input.content, approved: true, parentId }).returning();
     return {
       reply: { id: created.id, postId: created.postId, authorName: created.authorName, authorEmail: created.authorEmail, content: created.content, approved: created.approved, parentId: created.parentId, createdAt: created.createdAt },

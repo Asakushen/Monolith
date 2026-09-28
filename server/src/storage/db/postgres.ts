@@ -997,8 +997,8 @@ export class PostgresAdapter implements IDatabase {
 
   async addCommentReply(parentId: number, input: Pick<CreateCommentInput, "authorName" | "content">) {
     type Row = { id: number; post_id: number; author_name: string; author_email: string; content: string; approved: boolean; parent_id: number | null; created_at: Date; post_slug: string; post_title: string };
-    const [row] = await this.client<Row[]>`SELECT c.*, p.slug AS post_slug, p.title AS post_title FROM comments c INNER JOIN posts p ON c.post_id = p.id WHERE c.id = ${parentId} AND c.approved = true LIMIT 1`;
-    if (!row) throw new Error("只能回复已审核的评论");
+    const [row] = await this.client<Row[]>`SELECT c.*, p.slug AS post_slug, p.title AS post_title FROM comments c INNER JOIN posts p ON c.post_id = p.id WHERE c.id = ${parentId} AND c.approved = true AND c.parent_id IS NULL LIMIT 1`;
+    if (!row) throw new Error("只能回复已审核的一级评论");
     const [created] = await this.db.insert(pgComments).values({ postId: row.post_id, authorName: input.authorName, authorEmail: "", content: input.content, approved: true, parentId }).returning();
     return {
       reply: { id: created.id, postId: created.postId, authorName: created.authorName, authorEmail: created.authorEmail, content: created.content, approved: created.approved, parentId: created.parentId, createdAt: this.ts(created.createdAt) },

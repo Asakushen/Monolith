@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, primaryKey, uniqueIndex, index } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, primaryKey, uniqueIndex, index, type AnySQLiteColumn } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
 /* ── 文章表 ────────────────────────────────── */
@@ -79,7 +79,7 @@ export const comments = sqliteTable(
     authorEmail: text("author_email").notNull().default(""),
     content: text("content").notNull(),
     approved: integer("approved", { mode: "boolean" }).notNull().default(false),
-    parentId: integer("parent_id"),
+    parentId: integer("parent_id").references((): AnySQLiteColumn => comments.id, { onDelete: "cascade" }),
     createdAt: text("created_at")
       .notNull()
       .default(sql`(datetime('now'))`),

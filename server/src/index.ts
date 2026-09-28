@@ -6,6 +6,7 @@
 
 import { Hono } from "hono";
 import { buildCommentReplyEmail, shouldNotifyCommentReply } from "./comment-notifications";
+import { toCommentReplyErrorResponse } from "./comment-reply-errors";
 import { cors } from "hono/cors";
 import { sign, verify } from "hono/jwt";
 import type { Context } from "hono";
@@ -1418,8 +1419,8 @@ app.post("/api/admin/comments/:id/replies", async (c) => {
     }
     return c.json(reply, 201);
   } catch (err) {
-    const message = err instanceof Error ? err.message : "回复失败";
-    return c.json({ error: message }, message === "只能回复已审核的评论" ? 400 : 500);
+    const failure = toCommentReplyErrorResponse(err);
+    return c.json({ error: failure.error }, failure.status);
   }
 });
 

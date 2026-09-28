@@ -119,7 +119,7 @@ function CommentItem({ node, slug, depth, replyingTo, setReplyingTo, isAdminLogg
             <span className="text-[12px] text-muted-foreground/50">{formatSiteDate(comment.createdAt, dateSettings)}</span>
           </div>
           <p className="whitespace-pre-wrap break-words text-[14px] leading-[1.7] text-muted-foreground/80">{comment.content}</p>
-          <button type="button" onClick={() => setReplyingTo(replyingTo === comment.id ? null : comment.id)} className="mt-[6px] inline-flex min-h-[36px] items-center gap-[4px] text-[12px] text-muted-foreground/55 hover:text-foreground" aria-expanded={replyingTo === comment.id}><Reply className="h-[13px] w-[13px]" />回复</button>
+          <button type="button" onClick={() => setReplyingTo(replyingTo === comment.id ? null : comment.id)} className="mt-[6px] inline-flex min-h-[44px] sm:min-h-[36px] items-center gap-[4px] text-[12px] text-muted-foreground/55 hover:text-foreground" aria-expanded={replyingTo === comment.id}><Reply className="h-[13px] w-[13px]" />回复</button>
           {replyingTo === comment.id && <div className="mt-[8px] rounded-md border border-border/25 bg-card/10 p-[12px]"><CommentForm slug={slug} parent={comment} isAdminLoggedIn={isAdminLoggedIn} onSubmitted={onSubmitted} onCancel={() => setReplyingTo(null)} /></div>}
         </div>
       </article>

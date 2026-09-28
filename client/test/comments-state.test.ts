@@ -48,7 +48,7 @@ test("buildCommentForest surfaces every comment in a multi-node cycle", () => {
   const visited = new Set<number>();
   const visit = (nodes: typeof forest) => {
     for (const node of nodes) {
-      if (visited.has(node.comment.id)) continue;
+      assert.equal(visited.has(node.comment.id), false);
       visited.add(node.comment.id);
       visit(node.children);
     }

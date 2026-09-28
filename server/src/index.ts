@@ -783,8 +783,8 @@ app.post("/api/posts/:slug/comments", async (c) => {
       // 博主回复他人时，若父评论有邮箱且已审核，立即发送邮件通知
       if (parentId != null) {
         try {
-          const allComments = await db.getAllComments();
-          const parent = allComments.find((item) => item.id === parentId);
+          const approved = await db.getApprovedComments(slug);
+          const parent = approved.find((item) => item.id === parentId);
           if (parent && shouldNotifyCommentReply(parent)) {
             await sendEmail(c, {
               to: parent.authorEmail,
@@ -792,7 +792,7 @@ app.post("/api/posts/:slug/comments", async (c) => {
                 recipientName: parent.authorName,
                 replyAuthorName: authorName,
                 replyContent: content,
-                postTitle: parent.postTitle || post.title,
+                postTitle: post.title,
                 postSlug: slug,
                 parentCommentId: parent.id,
                 siteOrigin,
@@ -1512,10 +1512,15 @@ app.post("/api/admin/comments/:id/approve", async (c) => {
 app.post("/api/admin/comments/:id/replies", async (c) => {
   const parentId = Number.parseInt(c.req.param("id"), 10);
   if (!Number.isInteger(parentId) || parentId <= 0) return c.json({ error: "无效 ID" }, 400);
-  const parsed = await readJson<{ authorName?: string; content: string }>(c);
+  const parsed = await readJson<{ authorName?: unknown; content?: unknown }>(c);
   if (!parsed.ok) return parsed.response;
-  const authorName = parsed.body.authorName?.trim() || "博主";
-  const content = parsed.body.content?.trim();
+  const authorName = typeof parsed.body.authorName === "string" && parsed.body.authorName.trim()
+    ? parsed.body.authorName.trim()
+    : "博主";
+  if (typeof parsed.body.content !== "string") {
+    return c.json({ error: "回复内容必须为字符串" }, 400);
+  }
+  const content = parsed.body.content.trim();
   if (!content) return c.json({ error: "回复内容不能为空" }, 400);
   if (content.length > 2000) return c.json({ error: "回复内容不能超过 2000 字" }, 400);
   try {

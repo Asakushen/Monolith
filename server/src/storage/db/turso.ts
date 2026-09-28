@@ -106,6 +106,7 @@ export class TursoAdapter implements IDatabase {
 
   /** 初始化核心表（首次运行时自动创建） */
   async ensureCoreTables(): Promise<void> {
+    await this.db.run(sql`PRAGMA foreign_keys = ON;`);
     await this.db.run(sql`CREATE TABLE IF NOT EXISTS posts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       slug TEXT NOT NULL UNIQUE,

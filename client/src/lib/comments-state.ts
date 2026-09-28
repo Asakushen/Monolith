@@ -24,6 +24,7 @@ export function buildCommentForest<T extends CommentTreeItem>(comments: T[]): Co
   const visit = (node: CommentTreeNode<T>) => {
     if (reachable.has(node.comment.id)) return;
     reachable.add(node.comment.id);
+    node.children = node.children.filter((child) => !reachable.has(child.comment.id));
     node.children.forEach(visit);
   };
   roots.forEach(visit);

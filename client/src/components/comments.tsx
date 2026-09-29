@@ -112,7 +112,7 @@ function CommentItem({ node, slug, depth, replyingTo, setReplyingTo, isAdminLogg
           <div className="mb-[4px] flex flex-wrap items-center gap-x-[8px] gap-y-[2px]">
             <span className="text-[14px] font-medium text-foreground">{comment.authorName}</span>
             {comment.isAdmin && (
-              <span className="inline-flex items-center rounded-full border border-primary/40 bg-primary/15 px-[7px] py-[1px] text-[10px] font-semibold tracking-wider text-primary">
+              <span className="inline-flex items-center rounded-full border border-primary/40 bg-primary/15 px-[7px] py-[1px] text-[10px] font-semibold text-primary">
                 博主
               </span>
             )}

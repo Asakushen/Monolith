@@ -15,6 +15,17 @@ import { formatSiteDate } from "@/lib/date-format";
 
 type FilterType = "all" | "pending" | "approved";
 
+/** 审核队列中的回复上下文：标注回复对象，父评论已删时提示悬挂引用 */
+function ReplyContext({ parentId, commentsById }: { parentId: number | null; commentsById: Map<number, AdminComment> }) {
+  if (parentId == null) return null;
+  const parent = commentsById.get(parentId);
+  return (
+    <span className="text-[11px] text-muted-foreground/35">
+      {parent ? `回复 ${parent.authorName}` : "父评论已删除"}
+    </span>
+  );
+}
+
 export function AdminComments() {
   const { dateSettings } = useSiteSettings();
   const [comments, setComments] = useState<AdminComment[]>([]);
@@ -46,8 +57,10 @@ export function AdminComments() {
       setComments((prev) =>
         prev.map((c) => (c.id === id ? { ...c, approved: true } : c))
       );
+      setError("");
     } catch (err) {
       console.error(err);
+      setError("审核操作失败，请稍后重试。");
     } finally {
       setProcessing(null);
     }
@@ -59,8 +72,10 @@ export function AdminComments() {
     try {
       await deleteComment(id);
       setComments((prev) => removeCommentThread(prev, id));
+      setError("");
     } catch (err) {
       console.error(err);
+      setError("删除失败，请稍后重试。");
     } finally {
       setProcessing(null);
     }
@@ -71,8 +86,10 @@ export function AdminComments() {
     setProcessing(comment.id);
     try {
       const reply = await replyToComment(comment.id, { content: replyContent.trim() });
-      setComments((prev) => [...prev, { ...reply, authorEmail: "", postSlug: comment.postSlug, postTitle: comment.postTitle }]);
+      // 列表为最新在前（created_at DESC），新回复插到开头
+      setComments((prev) => [{ ...reply, authorEmail: "", postSlug: comment.postSlug, postTitle: comment.postTitle }, ...prev]);
       setReplyContent(""); setReplyingTo(null);
+      setError("");
     } catch (err) { setError(err instanceof Error ? err.message : "回复失败"); }
     finally { setProcessing(null); }
   };
@@ -85,6 +102,8 @@ export function AdminComments() {
     if (filter === "approved") return c.approved;
     return true;
   });
+
+  const commentsById = new Map(comments.map((c) => [c.id, c] as const));
 
   return (
     <div className="mx-auto w-full max-w-[960px] py-[32px]">
@@ -185,10 +204,11 @@ export function AdminComments() {
                   <div className="flex items-center gap-[8px] mb-[4px]">
                     <span className="text-[13px] font-medium text-foreground">{comment.authorName}</span>
                     {comment.isAdmin && (
-                      <span className="inline-flex items-center rounded-full border border-primary/40 bg-primary/15 px-[7px] py-[1px] text-[10px] font-semibold tracking-wider text-primary">
+                      <span className="inline-flex items-center rounded-full border border-primary/40 bg-primary/15 px-[7px] py-[1px] text-[10px] font-semibold text-primary">
                         博主
                       </span>
                     )}
+                    <ReplyContext parentId={comment.parentId} commentsById={commentsById} />
                     {comment.authorEmail && (
                       <span className="text-[11px] text-muted-foreground/30 truncate max-w-[200px]">{comment.authorEmail}</span>
                     )}
@@ -211,8 +231,8 @@ export function AdminComments() {
 
                   {replyingTo === comment.id && (
                     <div className="mb-[8px] flex gap-[6px]">
-                      <textarea value={replyContent} onChange={(e) => setReplyContent(e.target.value)} placeholder="以博主身份回复（直接公开）" maxLength={2000} className="min-h-[72px] flex-1 rounded-md border border-border/30 bg-background/50 px-[10px] py-[8px] text-[13px]" />
-                      <button onClick={() => handleReply(comment)} disabled={!replyContent.trim() || processing === comment.id} className="self-end rounded-md bg-foreground px-[10px] py-[7px] text-[12px] text-background disabled:opacity-40">发送</button>
+                      <textarea value={replyContent} onChange={(e) => setReplyContent(e.target.value)} placeholder="以博主身份回复（直接公开）" aria-label="回复内容" maxLength={2000} className="min-h-[72px] flex-1 rounded-md border border-border/30 bg-background/50 px-[10px] py-[8px] text-[13px]" />
+                      <button onClick={() => handleReply(comment)} disabled={!replyContent.trim() || processing === comment.id} className="min-h-[36px] self-end rounded-md bg-foreground px-[10px] py-[7px] text-[12px] text-background disabled:opacity-40">发送</button>
                     </div>
                   )}
                   {/* 底部：文章链接 + 时间 */}
@@ -229,10 +249,10 @@ export function AdminComments() {
                   </div>
                 </div>
 
-                {/* 操作按钮 */}
-                <div className="flex items-center gap-[1px] shrink-0 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
+                {/* 操作按钮：触屏常驻；仅在支持 hover 的指针上隐藏到悬停/聚焦时 */}
+                <div className="flex items-center gap-[4px] shrink-0 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100">
                   {comment.approved && (
-                    <button onClick={() => { setReplyingTo(replyingTo === comment.id ? null : comment.id); setReplyContent(""); }} title="回复" className="p-[7px] rounded-md text-muted-foreground/30 hover:text-foreground">
+                    <button onClick={() => { setReplyingTo(replyingTo === comment.id ? null : comment.id); setReplyContent(""); }} title="回复" aria-label="回复" className="inline-flex h-[36px] w-[36px] items-center justify-center rounded-md text-muted-foreground/30 hover:text-foreground">
                       <Reply className="h-[14px] w-[14px]" />
                     </button>
                   )}
@@ -241,7 +261,8 @@ export function AdminComments() {
                       onClick={() => handleApprove(comment.id)}
                       disabled={processing === comment.id}
                       title="通过审核"
-                      className="p-[7px] rounded-md text-muted-foreground/30 hover:text-emerald-400 hover:bg-emerald-400/8 transition-colors disabled:opacity-30"
+                      aria-label="通过审核"
+                      className="inline-flex h-[36px] w-[36px] items-center justify-center rounded-md text-muted-foreground/30 hover:text-emerald-400 hover:bg-emerald-400/8 transition-colors disabled:opacity-30"
                     >
                       <Check className={`h-[14px] w-[14px] ${processing === comment.id ? "animate-pulse" : ""}`} />
                     </button>
@@ -250,7 +271,8 @@ export function AdminComments() {
                     onClick={() => handleDelete(comment.id)}
                     disabled={processing === comment.id}
                     title="删除"
-                    className="p-[7px] rounded-md text-muted-foreground/30 hover:text-red-400 hover:bg-red-400/8 transition-colors disabled:opacity-30"
+                    aria-label="删除"
+                    className="inline-flex h-[36px] w-[36px] items-center justify-center rounded-md text-muted-foreground/30 hover:text-red-400 hover:bg-red-400/8 transition-colors disabled:opacity-30"
                   >
                     <Trash2 className={`h-[13px] w-[13px] ${processing === comment.id ? "animate-pulse" : ""}`} />
                   </button>

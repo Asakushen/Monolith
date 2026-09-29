@@ -39,7 +39,8 @@ export function buildCommentForest<T extends CommentTreeItem>(comments: T[]): Co
 }
 
 export function commentIndentStep(depth: number): number {
-  return depth > 0 && depth <= 4 ? 10 : 0;
+  // 嵌套视觉层级由每层 border-l + padding 提供；此偏移对所有子层级保持恒定
+  return depth > 0 ? 10 : 0;
 }
 
 export function removeCommentThread<T extends CommentTreeItem>(comments: T[], deletedId: number): T[] {

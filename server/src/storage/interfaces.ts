@@ -287,6 +287,7 @@ export interface IDatabase {
   getApprovedComments(postSlug: string): Promise<Comment[]>;
   addComment(input: CreateCommentInput): Promise<Comment>;
   addCommentReply(parentId: number, input: Pick<CreateCommentInput, "authorName" | "content">): Promise<{ reply: Comment; parent: Comment & { postSlug: string; postTitle: string } }>;
+  getCommentById(id: number): Promise<(Comment & { postSlug: string; postTitle: string }) | null>;
   getAllComments(): Promise<(Comment & { postSlug: string; postTitle: string })[]>;
   approveComment(id: number): Promise<CommentApprovalResult>;
   deleteComment(id: number): Promise<boolean>;

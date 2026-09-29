@@ -44,6 +44,7 @@ type Variables = {
   jwtPayload: { sub: string; exp: number };
   db: IDatabase;
   storage: IObjectStorage;
+  requestSettings: Record<string, string>;
 };
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -127,9 +128,17 @@ function pickSiteOrigin(settings: Record<string, string>, env: Partial<Bindings>
 }
 
 /** 通知类配置（Resend 发件人、管理员邮箱、站点域名）：控制台设置优先，回退部署变量 */
-async function getNotificationSettings(c: AppContext): Promise<{ resendFrom: string; adminEmail: string; siteOrigin: string }> {
+async function getRequestSettings(c: AppContext): Promise<Record<string, string>> {
+  const cached = c.get("requestSettings");
+  if (cached) return cached;
   let settings: Record<string, string> = {};
   try { settings = await c.get("db").getSettings(); } catch { /* 通知路径容错 */ }
+  c.set("requestSettings", settings);
+  return settings;
+}
+
+async function getNotificationSettings(c: AppContext): Promise<{ resendFrom: string; adminEmail: string; siteOrigin: string }> {
+  const settings = await getRequestSettings(c);
   return {
     resendFrom: settings.resend_from?.trim() || c.env.RESEND_FROM || "",
     adminEmail: settings.admin_email?.trim() || c.env.ADMIN_EMAIL || "",
@@ -707,8 +716,8 @@ app.post("/api/posts/:slug/comments", async (c) => {
   if (!parsed.ok) return parsed.response;
   const body = parsed.body;
 
-  // Honeypot 反垃圾：仅对普通访客生效
-  if (!isAdmin && typeof body._hp === "string" && body._hp.length > 0) {
+  // Honeypot 反垃圾：仅对普通访客生效（任意真值都视为机器人填写）
+  if (!isAdmin && body._hp) {
     return c.json({ success: true, message: "评论已提交，等待审核" });
   }
 
@@ -726,31 +735,32 @@ app.post("/api/posts/:slug/comments", async (c) => {
   let content: string;
   let parentId: number | null = null;
 
-  if (isAdmin) {
-    const db = c.get("db");
-    let settings: Record<string, string> = {};
-    try { settings = await db.getSettings(); } catch {}
-    
-    // 博主可自定义名字，或默认使用博客作者名/“博主”
-    const rawName = typeof body.authorName === "string" ? body.authorName.trim() : "";
-    authorName = rawName.slice(0, 50) || settings.author_name || "博主";
-    authorEmail = settings.email || "";
+  const db = c.get("db");
+  const postPromise = db.getPostBySlug(slug);
 
+  if (isAdmin) {
     if (typeof body.content !== "string" || !body.content.trim()) {
       return c.json({ error: "评论内容不能为空" }, 400);
     }
     if (body.content.trim().length > 2000) {
       return c.json({ error: "评论内容不能超过 2000 字" }, 400);
     }
-    content = body.content.trim();
-
     if (body.parentId !== undefined && body.parentId !== null) {
-      const pId = Number(body.parentId);
-      if (!Number.isInteger(pId) || pId <= 0) {
+      if (typeof body.parentId !== "number" || !Number.isSafeInteger(body.parentId) || body.parentId <= 0) {
         return c.json({ error: "无效的父评论 ID" }, 400);
       }
-      parentId = pId;
+      parentId = body.parentId;
     }
+
+    // settings 与文章查询相互独立，并发获取
+    const [settings, resolvedPost] = await Promise.all([getRequestSettings(c), postPromise]);
+    if (!resolvedPost || !isPublicPost(resolvedPost)) return c.json({ error: "文章未找到" }, 404);
+
+    // 博主可自定义名字，或默认使用博客作者名/“博主”
+    const rawName = typeof body.authorName === "string" ? body.authorName.trim() : "";
+    authorName = rawName.slice(0, 50) || settings.author_name || "博主";
+    authorEmail = settings.email || "";
+    content = body.content.trim();
   } else {
     const validated = parsePublicCommentInput(body);
     if (!validated.ok) {
@@ -762,8 +772,7 @@ app.post("/api/posts/:slug/comments", async (c) => {
     parentId = validated.value.parentId;
   }
 
-  const db = c.get("db");
-  const post = await db.getPostBySlug(slug);
+  const post = await postPromise;
   if (!post || !isPublicPost(post)) return c.json({ error: "文章未找到" }, 404);
 
   try {
@@ -783,8 +792,7 @@ app.post("/api/posts/:slug/comments", async (c) => {
       // 博主回复他人时，若父评论有邮箱且已审核，立即发送邮件通知
       if (parentId != null) {
         try {
-          const approved = await db.getApprovedComments(slug);
-          const parent = approved.find((item) => item.id === parentId);
+          const parent = await db.getCommentById(parentId);
           if (parent && shouldNotifyCommentReply(parent)) {
             await sendEmail(c, {
               to: parent.authorEmail,
@@ -1514,9 +1522,17 @@ app.post("/api/admin/comments/:id/replies", async (c) => {
   if (!Number.isInteger(parentId) || parentId <= 0) return c.json({ error: "无效 ID" }, 400);
   const parsed = await readJson<{ authorName?: unknown; content?: unknown }>(c);
   if (!parsed.ok) return parsed.response;
-  const authorName = typeof parsed.body.authorName === "string" && parsed.body.authorName.trim()
-    ? parsed.body.authorName.trim()
-    : "博主";
+  let authorName = "博主";
+  if (parsed.body.authorName !== undefined && parsed.body.authorName !== null) {
+    if (typeof parsed.body.authorName !== "string") {
+      return c.json({ error: "回复昵称必须为字符串" }, 400);
+    }
+    const trimmedName = parsed.body.authorName.trim();
+    if (trimmedName.length > 50) {
+      return c.json({ error: "回复昵称不能超过 50 字" }, 400);
+    }
+    if (trimmedName) authorName = trimmedName;
+  }
   if (typeof parsed.body.content !== "string") {
     return c.json({ error: "回复内容必须为字符串" }, 400);
   }
@@ -2518,6 +2534,7 @@ app.post("/api/admin/pages/delete", async (c) => {
 });
 
 /* ── Durable Object / 导出 ──────────────────── */
+export { app };
 export default {
   fetch: app.fetch,
   async scheduled(event: any, env: Bindings, ctx: any) {

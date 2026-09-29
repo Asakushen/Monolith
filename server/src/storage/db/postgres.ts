@@ -1016,6 +1016,13 @@ export class PostgresAdapter implements IDatabase {
     };
   }
 
+  async getCommentById(id: number): Promise<(Comment & { postSlug: string; postTitle: string }) | null> {
+    type Row = { id: number; post_id: number; author_name: string; author_email: string; content: string; approved: boolean; parent_id: number | null; is_admin: boolean; created_at: Date; post_slug: string; post_title: string };
+    const [row] = await this.client<Row[]>`SELECT c.*, p.slug AS post_slug, p.title AS post_title FROM comments c INNER JOIN posts p ON c.post_id = p.id WHERE c.id = ${id} LIMIT 1`;
+    if (!row) return null;
+    return { id: row.id, postId: row.post_id, authorName: row.author_name, authorEmail: row.author_email || "", content: row.content, approved: row.approved, parentId: row.parent_id, isAdmin: Boolean(row.is_admin), createdAt: this.ts(row.created_at), postSlug: row.post_slug, postTitle: row.post_title };
+  }
+
   async getAllComments(): Promise<(Comment & { postSlug: string; postTitle: string })[]> {
     type Row = { id: number; post_id: number; author_name: string; author_email: string; content: string; approved: boolean; parent_id: number | null; is_admin: boolean; created_at: Date; post_slug: string; post_title: string };
     const rows = await this.client<Row[]>`
@@ -1046,16 +1053,23 @@ export class PostgresAdapter implements IDatabase {
     if (!row) return { found: false, becameApproved: false };
     const updated = await this.db.update(pgComments).set({ approved: true }).where(and(eq(pgComments.id, id), eq(pgComments.approved, false))).returning({ id: pgComments.id });
     const becameApproved = updated.length > 0;
-    const toComment = (value: Row) => ({ id: value.id, postId: value.post_id, authorName: value.author_name, authorEmail: value.author_email || "", content: value.content, approved: true, parentId: value.parent_id, isAdmin: Boolean(value.is_admin), createdAt: this.ts(value.created_at), postSlug: value.post_slug, postTitle: value.post_title });
+    const toComment = (value: Row, approved = true) => ({ id: value.id, postId: value.post_id, authorName: value.author_name, authorEmail: value.author_email || "", content: value.content, approved, parentId: value.parent_id, isAdmin: Boolean(value.is_admin), createdAt: this.ts(value.created_at), postSlug: value.post_slug, postTitle: value.post_title });
     let parent;
     if (row.parent_id != null) {
       const [parentRow] = await this.client<Row[]>`SELECT c.*, p.slug AS post_slug, p.title AS post_title FROM comments c INNER JOIN posts p ON c.post_id = p.id WHERE c.id = ${row.parent_id} LIMIT 1`;
-      if (parentRow) parent = toComment(parentRow);
+      if (parentRow) parent = toComment(parentRow, parentRow.approved);
     }
     return { found: true, becameApproved, comment: toComment(row), parent };
   }
 
   async deleteComment(id: number): Promise<boolean> {
+    // 与 SQLite 系适配器保持一致：显式删除全部后代回复，不单纯依赖 FK 级联
+    await this.client`WITH RECURSIVE subtree(id) AS (
+        SELECT id FROM comments WHERE parent_id = ${id}
+        UNION ALL
+        SELECT c.id FROM comments c INNER JOIN subtree s ON c.parent_id = s.id
+      )
+      DELETE FROM comments WHERE id IN (SELECT id FROM subtree)`;
     const result = await this.db
       .delete(pgComments)
       .where(eq(pgComments.id, id))

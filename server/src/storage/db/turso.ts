@@ -178,7 +178,10 @@ export class TursoAdapter implements IDatabase {
     try { await this.db.run(sql`ALTER TABLE posts ADD COLUMN card_height INTEGER NOT NULL DEFAULT 220`); } catch {}
   }
 
+  private commentsTableEnsured = false;
+
   private async ensureCommentsTable(): Promise<void> {
+    if (this.commentsTableEnsured) return;
     await this.db.run(sql`CREATE TABLE IF NOT EXISTS comments (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
@@ -190,10 +193,18 @@ export class TursoAdapter implements IDatabase {
       is_admin INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`);
-    try { await this.db.run(sql`ALTER TABLE comments ADD COLUMN parent_id INTEGER REFERENCES comments(id) ON DELETE CASCADE`); } catch {}
-    try { await this.db.run(sql`ALTER TABLE comments ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0`); } catch {}
+    // 历史库补列：先查表结构再按需补齐，避免每次请求都跑必然失败的 ALTER
+    const columnResult = await this.db.run(sql`SELECT name FROM pragma_table_info('comments')`);
+    const columns = new Set(((columnResult.rows ?? []) as { name?: string }[]).map((r) => r.name).filter((name): name is string => Boolean(name)));
+    if (!columns.has("parent_id")) {
+      await this.db.run(sql`ALTER TABLE comments ADD COLUMN parent_id INTEGER REFERENCES comments(id) ON DELETE CASCADE`);
+    }
+    if (!columns.has("is_admin")) {
+      await this.db.run(sql`ALTER TABLE comments ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0`);
+    }
     await this.db.run(sql`CREATE INDEX IF NOT EXISTS comments_post_id_idx ON comments(post_id)`);
     await this.db.run(sql`CREATE INDEX IF NOT EXISTS comments_parent_id_idx ON comments(parent_id)`);
+    this.commentsTableEnsured = true;
   }
 
   private async ensureGuestbookMessagesTable(): Promise<void> {
@@ -987,6 +998,26 @@ export class TursoAdapter implements IDatabase {
     };
   }
 
+  async getCommentById(id: number): Promise<(Comment & { postSlug: string; postTitle: string }) | null> {
+    await this.ensureCommentsTable();
+    const result = await this.db.run(sql`SELECT c.*, p.slug AS post_slug, p.title AS post_title FROM comments c INNER JOIN posts p ON c.post_id = p.id WHERE c.id = ${id} LIMIT 1`);
+    const row = result.rows?.[0] as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return {
+      id: Number(row.id),
+      postId: Number(row.post_id),
+      authorName: String(row.author_name),
+      authorEmail: String(row.author_email || ""),
+      content: String(row.content),
+      approved: Boolean(row.approved),
+      parentId: row.parent_id == null ? null : Number(row.parent_id),
+      isAdmin: Boolean(row.is_admin),
+      createdAt: String(row.created_at),
+      postSlug: String(row.post_slug),
+      postTitle: String(row.post_title),
+    };
+  }
+
   async getAllComments(): Promise<(Comment & { postSlug: string; postTitle: string })[]> {
     await this.ensureCommentsTable();
     const result = await this.db.run(
@@ -1018,18 +1049,25 @@ export class TursoAdapter implements IDatabase {
     if (!row) return { found: false, becameApproved: false };
     const updated = await this.db.update(comments).set({ approved: true }).where(and(eq(comments.id, id), eq(comments.approved, false))).returning({ id: comments.id });
     const becameApproved = updated.length > 0;
-    const toComment = (value: Record<string, unknown>) => ({ id: Number(value.id), postId: Number(value.post_id), authorName: String(value.author_name), authorEmail: String(value.author_email || ""), content: String(value.content), approved: true, parentId: value.parent_id == null ? null : Number(value.parent_id), isAdmin: Boolean(value.is_admin), createdAt: String(value.created_at), postSlug: String(value.post_slug), postTitle: String(value.post_title) });
+    const toComment = (value: Record<string, unknown>, approved = true) => ({ id: Number(value.id), postId: Number(value.post_id), authorName: String(value.author_name), authorEmail: String(value.author_email || ""), content: String(value.content), approved, parentId: value.parent_id == null ? null : Number(value.parent_id), isAdmin: Boolean(value.is_admin), createdAt: String(value.created_at), postSlug: String(value.post_slug), postTitle: String(value.post_title) });
     let parent;
     if (row.parent_id != null) {
       const parentResult = await this.db.run(sql`SELECT c.*, p.slug AS post_slug, p.title AS post_title FROM comments c INNER JOIN posts p ON c.post_id = p.id WHERE c.id = ${Number(row.parent_id)} LIMIT 1`);
       const parentRow = parentResult.rows?.[0] as Record<string, unknown> | undefined;
-      if (parentRow) parent = toComment(parentRow);
+      if (parentRow) parent = toComment(parentRow, Boolean(parentRow.approved));
     }
     return { found: true, becameApproved, comment: toComment(row), parent };
   }
 
   async deleteComment(id: number): Promise<boolean> {
     await this.ensureCommentsTable();
+    // 显式删除全部后代回复：不依赖每连接 PRAGMA foreign_keys 是否生效
+    await this.db.run(sql`WITH RECURSIVE subtree(id) AS (
+        SELECT id FROM comments WHERE parent_id = ${id}
+        UNION ALL
+        SELECT c.id FROM comments c INNER JOIN subtree s ON c.parent_id = s.id
+      )
+      DELETE FROM comments WHERE id IN (SELECT id FROM subtree)`);
     const result = await this.db
       .delete(comments)
       .where(eq(comments.id, id))

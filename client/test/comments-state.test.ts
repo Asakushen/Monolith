@@ -1,4 +1,4 @@
-import test from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 import { buildCommentForest, commentIndentStep, removeCommentThread } from "../src/lib/comments-state.ts";
 
@@ -59,6 +59,27 @@ test("buildCommentForest surfaces every comment in a multi-node cycle", () => {
 });
 
 
-test("comment indentation stops increasing after four nested levels", () => {
-  assert.deepEqual([0, 1, 2, 3, 4, 5, 10].map(commentIndentStep), [0, 10, 10, 10, 10, 0, 0]);
+test("comment indentation holds steady for deeply nested replies", () => {
+  assert.deepEqual([0, 1, 2, 3, 4, 5, 10].map(commentIndentStep), [0, 10, 10, 10, 10, 10, 10]);
+});
+
+
+test("a 1000-level chain builds without error and deletes in full", () => {
+  const comments = Array.from({ length: 1000 }, (_, index) => ({
+    id: index + 1,
+    parentId: index === 0 ? null : index,
+  }));
+
+  const forest = buildCommentForest(comments);
+  assert.equal(forest.length, 1);
+
+  let depth = 0;
+  let node = forest[0];
+  while (node.children.length > 0) {
+    node = node.children[0];
+    depth += 1;
+  }
+  assert.equal(depth, 999);
+
+  assert.equal(removeCommentThread(comments, 1).length, 0);
 });

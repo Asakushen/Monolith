@@ -1,4 +1,4 @@
-import test from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -207,6 +207,42 @@ test("Turso supports authenticated admin comments with instant approval and isAd
     assert.equal(approved.length, 1);
     assert.equal(approved[0].authorName, "真正博主");
     assert.equal(approved[0].isAdmin, true);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("concurrent approvals flip becameApproved exactly once", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "monolith-concurrent-approval-"));
+  try {
+    const adapter = new TursoAdapter(`file:${join(directory, "test.db")}`);
+    await adapter.ensureCoreTables();
+    await adapter.createPost({ slug: "concurrent", title: "Concurrent", content: "Body", published: true });
+    const parent = await adapter.addComment({ postSlug: "concurrent", authorName: "Parent", authorEmail: "p@example.com", content: "Parent" });
+    await adapter.approveComment(parent.id);
+    const reply = await adapter.addComment({ postSlug: "concurrent", authorName: "Child", content: "Child", parentId: parent.id });
+
+    const results = await Promise.all([adapter.approveComment(reply.id), adapter.approveComment(reply.id)]);
+    assert.equal(results.filter((result) => result.becameApproved).length, 1);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("getCommentById returns the joined post context and null for unknown ids", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "monolith-comment-by-id-"));
+  try {
+    const adapter = new TursoAdapter(`file:${join(directory, "test.db")}`);
+    await adapter.ensureCoreTables();
+    await adapter.createPost({ slug: "by-id", title: "By Id", content: "Body", published: true });
+    const comment = await adapter.addComment({ postSlug: "by-id", authorName: "Reader", authorEmail: "r@example.com", content: "Hello" });
+
+    const found = await adapter.getCommentById(comment.id);
+    assert.equal(found?.postSlug, "by-id");
+    assert.equal(found?.postTitle, "By Id");
+    assert.equal(found?.authorEmail, "r@example.com");
+
+    assert.equal(await adapter.getCommentById(987654), null);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

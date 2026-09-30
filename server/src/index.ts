@@ -737,6 +737,8 @@ app.post("/api/posts/:slug/comments", async (c) => {
 
   const db = c.get("db");
   const postPromise = db.getPostBySlug(slug);
+  // 校验失败的早退 400 不会 await 该查询；挂兜底避免 unhandled rejection
+  postPromise.catch(() => {});
 
   if (isAdmin) {
     if (typeof body.content !== "string" || !body.content.trim()) {

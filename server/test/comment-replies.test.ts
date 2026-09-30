@@ -1,5 +1,6 @@
 import { test } from "vitest";
 import assert from "node:assert/strict";
+import { sql } from "drizzle-orm";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -243,6 +244,28 @@ test("getCommentById returns the joined post context and null for unknown ids", 
     assert.equal(found?.authorEmail, "r@example.com");
 
     assert.equal(await adapter.getCommentById(987654), null);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("deleting a comment whose parent chain forms a cycle terminates and cleans up", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "monolith-cycle-delete-"));
+  try {
+    const adapter = new TursoAdapter(`file:${join(directory, "test.db")}`);
+    await adapter.ensureCoreTables();
+    await adapter.createPost({ slug: "cycle", title: "Cycle", content: "Body", published: true });
+    const root = await adapter.addComment({ postSlug: "cycle", authorName: "Root", content: "Root" });
+    await adapter.approveComment(root.id);
+    const { reply: child } = await adapter.addCommentReply(root.id, { authorName: "Admin", content: "Child" });
+
+    // 直接改库制造 root↔child 环（API 层无法构造，模拟外部迁移脏数据）：
+    // UNION 版递归 CTE 必须自然终止而不是无限递归
+    const raw = adapter as unknown as { db: { run: (query: unknown) => Promise<unknown> } };
+    await raw.db.run(sql`UPDATE comments SET parent_id = ${child.id} WHERE id = ${root.id}`);
+
+    assert.equal(await adapter.deleteComment(root.id), true);
+    assert.equal((await adapter.getAllComments()).length, 0);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

@@ -193,14 +193,15 @@ export class TursoAdapter implements IDatabase {
       is_admin INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`);
-    // 历史库补列：先查表结构再按需补齐，避免每次请求都跑必然失败的 ALTER
+    // 历史库补列：先查表结构再按需补齐，避免每次请求都跑必然失败的 ALTER；
+    // try/catch 兜底并发首跑的 duplicate column 竞态（适配器每请求新建实例）
     const columnResult = await this.db.run(sql`SELECT name FROM pragma_table_info('comments')`);
     const columns = new Set(((columnResult.rows ?? []) as { name?: string }[]).map((r) => r.name).filter((name): name is string => Boolean(name)));
     if (!columns.has("parent_id")) {
-      await this.db.run(sql`ALTER TABLE comments ADD COLUMN parent_id INTEGER REFERENCES comments(id) ON DELETE CASCADE`);
+      try { await this.db.run(sql`ALTER TABLE comments ADD COLUMN parent_id INTEGER REFERENCES comments(id) ON DELETE CASCADE`); } catch { /* 并发补列竞态，忽略 */ }
     }
     if (!columns.has("is_admin")) {
-      await this.db.run(sql`ALTER TABLE comments ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0`);
+      try { await this.db.run(sql`ALTER TABLE comments ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0`); } catch { /* 并发补列竞态，忽略 */ }
     }
     await this.db.run(sql`CREATE INDEX IF NOT EXISTS comments_post_id_idx ON comments(post_id)`);
     await this.db.run(sql`CREATE INDEX IF NOT EXISTS comments_parent_id_idx ON comments(parent_id)`);
@@ -1061,17 +1062,19 @@ export class TursoAdapter implements IDatabase {
 
   async deleteComment(id: number): Promise<boolean> {
     await this.ensureCommentsTable();
-    // 显式删除全部后代回复：不依赖每连接 PRAGMA foreign_keys 是否生效
-    await this.db.run(sql`WITH RECURSIVE subtree(id) AS (
-        SELECT id FROM comments WHERE parent_id = ${id}
-        UNION ALL
-        SELECT c.id FROM comments c INNER JOIN subtree s ON c.parent_id = s.id
-      )
-      DELETE FROM comments WHERE id IN (SELECT id FROM subtree)`);
+    // 先删目标行拿 found 标志（FK 生效时引擎级联清掉后代）；
+    // 再用递归 CTE 兜底清理后代，覆盖 PRAGMA foreign_keys 未生效的连接；
+    // UNION 去重保证 parent_id 成环的脏数据下递归自然终止
     const result = await this.db
       .delete(comments)
       .where(eq(comments.id, id))
       .returning();
+    await this.db.run(sql`WITH RECURSIVE subtree(id) AS (
+        SELECT id FROM comments WHERE parent_id = ${id}
+        UNION
+        SELECT c.id FROM comments c INNER JOIN subtree s ON c.parent_id = s.id
+      )
+      DELETE FROM comments WHERE id IN (SELECT id FROM subtree)`);
     return result.length > 0;
   }
 

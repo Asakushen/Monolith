@@ -1063,17 +1063,18 @@ export class PostgresAdapter implements IDatabase {
   }
 
   async deleteComment(id: number): Promise<boolean> {
-    // 与 SQLite 系适配器保持一致：显式删除全部后代回复，不单纯依赖 FK 级联
-    await this.client`WITH RECURSIVE subtree(id) AS (
-        SELECT id FROM comments WHERE parent_id = ${id}
-        UNION ALL
-        SELECT c.id FROM comments c INNER JOIN subtree s ON c.parent_id = s.id
-      )
-      DELETE FROM comments WHERE id IN (SELECT id FROM subtree)`;
+    // 先删目标行拿 found 标志（FK 引擎级联清掉后代）；再用递归 CTE 兜底，
+    // 与 SQLite 系适配器保持一致；UNION 去重防 parent_id 成环的脏数据
     const result = await this.db
       .delete(pgComments)
       .where(eq(pgComments.id, id))
       .returning();
+    await this.client`WITH RECURSIVE subtree(id) AS (
+        SELECT id FROM comments WHERE parent_id = ${id}
+        UNION
+        SELECT c.id FROM comments c INNER JOIN subtree s ON c.parent_id = s.id
+      )
+      DELETE FROM comments WHERE id IN (SELECT id FROM subtree)`;
     return result.length > 0;
   }
 

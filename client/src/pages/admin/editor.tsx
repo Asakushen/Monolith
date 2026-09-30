@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useLocation } from "wouter";
-import { fetchPost, createPost, updatePost, uploadImage, localizePostImages, fetchPostVersions, restorePostVersion, type PostVersion } from "@/lib/api";
+import { fetchAdminPosts, createPost, updatePost, uploadImage, localizePostImages, fetchPostVersions, restorePostVersion, type PostVersion } from "@/lib/api";
 import { CARD_GRID_SIZE_LABEL, CARD_IMAGE_MODE_LABEL, clampCardHeight, clampCardWidth, getArticleCardImageMode, getCardGridSize } from "@/lib/card-layout";
 import { renderMarkdown } from "@/lib/markdown";
 import { Save, Eye, EyeOff, Upload, Image, ChevronDown, ChevronUp, Bold, Italic, Heading2, Heading3, Link2, Code, Quote, List, ListOrdered, Minus, Maximize2, Minimize2, Table, CheckSquare, FileCode, ImageDown, History, Check, X, ArrowDownUp, PanelRightClose, PanelRight, ArrowLeft, RotateCcw, SlidersHorizontal } from "lucide-react";
@@ -137,6 +137,8 @@ export function AdminEditor() {
     category: "",
   });
   const [saving, setSaving] = useState(false);
+  const [loadingPost, setLoadingPost] = useState(isEdit);
+  const [loadError, setLoadError] = useState("");
   const [message, setMessage] = useState({ text: "", type: "" as "" | "success" | "error" });
   const [showPreview, setShowPreview] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -173,7 +175,11 @@ export function AdminEditor() {
     document.title = isEdit ? "编辑文章 | Monolith" : "新建文章 | Monolith";
 
     if (isEdit && params.slug) {
-      fetchPost(params.slug).then((post) => {
+      setLoadingPost(true);
+      setLoadError("");
+      fetchAdminPosts().then((posts) => {
+        const post = posts.find((item) => item.slug === params.slug);
+        if (!post) throw new Error("文章不存在或已被删除");
         setForm({
           slug: post.slug,
           title: post.title,
@@ -192,7 +198,9 @@ export function AdminEditor() {
           category: post.category || "",
         });
         setAutoSlug(false);
-      });
+      }).catch((err: unknown) => {
+        setLoadError(err instanceof Error ? err.message : "文章加载失败，请返回后重试");
+      }).finally(() => setLoadingPost(false));
     } else {
       // 新建时尝试恢复草稿
       const draft = loadDraft("new");
@@ -228,7 +236,7 @@ export function AdminEditor() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [form]);
+  }, [form, isEdit, loadingPost, loadError]);
 
   const showMsg = useCallback((text: string, type: "success" | "error") => {
     setMessage({ text, type });
@@ -236,6 +244,10 @@ export function AdminEditor() {
   }, []);
 
   const handleSave = async () => {
+    if (isEdit && (loadingPost || loadError)) {
+      showMsg("文章未成功加载，已阻止保存，请返回后重试", "error");
+      return;
+    }
     if (!form.slug || !form.title) {
       showMsg("请填写 Slug 和标题", "error");
       return;
@@ -481,6 +493,15 @@ export function AdminEditor() {
     { label: "红色状态", value: "from-red-500/12 to-zinc-500/12" },
   ];
 
+  if (isEdit && (loadingPost || loadError)) {
+    return (
+      <div className="mx-auto w-full max-w-[1280px] px-6 py-12" role={loadError ? "alert" : "status"}>
+        <p>{loadingPost ? "正在加载文章…" : `文章加载失败：${loadError}`}</p>
+        {loadError && <button className="mt-4 underline" onClick={() => setLocation("/admin")}>返回文章列表</button>}
+      </div>
+    );
+  }
+
   return (
     <div
       className="mx-auto flex h-[calc(100vh-56px)] w-full max-w-[1280px] flex-col px-[12px] py-[16px] sm:px-[18px] sm:py-[20px]"
@@ -559,7 +580,7 @@ export function AdminEditor() {
                   if (result.replaced > 0) {
                     showMsg(`已转换 ${result.replaced} 张图片${result.failed ? `，${result.failed} 张失败` : ""}`, "success");
                     // 重新加载文章内容到编辑器
-                    const fresh = await fetchPost(params.slug);
+                    const fresh = (await fetchAdminPosts()).find((post) => post.slug === params.slug);
                     if (fresh) updateField("content", fresh.content);
                   } else {
                     showMsg(result.message || "未发现外链图片", "success");

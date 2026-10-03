@@ -34,6 +34,8 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ["**/*.{js,css,html,ico,png,svg}"],
+        // og-default.png 仅用于社交分享卡（爬虫抓取），无需离线预缓存
+        globIgnores: ["**/og-default.png"],
         navigateFallbackDenylist: [/^\/sitemap\.xml$/i, /^\/robots\.txt$/i, /^\/rss\.xml$/i],
         runtimeCaching: [
           {

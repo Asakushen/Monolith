@@ -32,7 +32,7 @@ import {
   TrendingDown,
   TrendingUp,
 } from "lucide-react";
-import { AnalyticsAEAdvancedView } from "./analytics-ae";
+import { AnalyticsAEAdvancedView, AnalyticsAEConfigCard } from "./analytics-ae";
 
 type AEStatus = "loading" | "ready" | "unavailable" | "error";
 type RankItem = { name: string; count: number; share?: number; meaning?: string };
@@ -644,6 +644,7 @@ export function AdminAnalytics() {
             <ReportSection report={data.derived.report} />
           </div>
 
+          <AnalyticsAEConfigCard />
           {aeData ? <AnalyticsAEAdvancedView data={aeData} /> : <AEAdvancedState status={aeStatus} error={aeError} />}
 
           <div className="grid grid-cols-1 gap-[16px] lg:grid-cols-2">

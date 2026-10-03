@@ -203,14 +203,25 @@ function authHeaders(): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-export async function login(password: string): Promise<string> {
+export async function fetchPublicSettings(): Promise<Record<string, string>> {
+  const res = await fetch(`${API_BASE}/api/settings/public`, { cache: "no-store" });
+  if (!res.ok) throw new Error("设置加载失败");
+  return res.json();
+}
+
+export async function login(password: string, turnstileToken?: string): Promise<string> {
   const res = await fetch(`${API_BASE}/api/auth/login`, {
     method: "POST",
     cache: "no-store",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password }),
+    body: JSON.stringify(turnstileToken ? { password, turnstile_token: turnstileToken } : { password }),
   });
-  if (!res.ok) throw new Error("密码错误");
+  if (!res.ok) {
+    const data = await res.json().catch(() => null) as { error?: string; code?: string } | null;
+    const error = new Error(data?.error || "密码错误，请重试") as Error & { code?: string };
+    error.code = data?.code;
+    throw error;
+  }
   const data = await res.json();
   setToken(data.token);
   return data.token;

@@ -2,11 +2,11 @@
 
 import { Link, useLocation } from "wouter";
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { Menu } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { AdminGate } from "@/components/admin-gate";
 import { SearchTrigger } from "@/components/search";
-import { ThemeToggle } from "@/components/theme-toggle";
 import { fetchNavPages, type NavPage } from "@/lib/api";
 import { useSiteSettings } from "@/lib/site-settings";
 
@@ -141,7 +141,6 @@ export function Navbar() {
 
           <div className="flex items-center gap-[4px]">
             <SearchTrigger />
-            <span className="w-[1px] h-[16px] bg-border/40 mx-[2px]" />
             <ThemeToggle />
 
             <Sheet open={open} onOpenChange={setOpen}>

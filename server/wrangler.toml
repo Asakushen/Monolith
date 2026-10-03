@@ -1,5 +1,6 @@
 name = "monolith-server"
 main = "src/index.ts"
+account_id = "54a48beaa1b4d3e852d3f80a74b8de0a"
 compatibility_date = "2024-12-30"
 compatibility_flags = ["nodejs_compat"]
 
@@ -10,6 +11,8 @@ BLOG_NAME = "浅草物语"
 SITE_ORIGIN = "https://www.chillg.de"
 # 运行时默认不做建表/补列；部署流程负责迁移与 schema reconcile。
 AUTO_SCHEMA_MIGRATION = "false"
+# AE GraphQL 查询所需的账户 ID（非敏感；查询令牌走 CLOUDFLARE_API_TOKEN secret）
+CLOUDFLARE_ACCOUNT_ID = "54a48beaa1b4d3e852d3f80a74b8de0a"
 
 # D1 数据库绑定
 [[d1_databases]]

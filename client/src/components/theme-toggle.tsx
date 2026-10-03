@@ -1,3 +1,5 @@
+import { applySiteTheme, normalizeSiteThemeMode, normalizeSiteThemeStyle } from "@/lib/site-theme";
+import { useSiteSettings } from "@/lib/site-settings";
 import { useState, useEffect, useRef, type ComponentType } from "react";
 import {
   Moon,
@@ -19,8 +21,8 @@ const STYLE_OPTIONS: {
   desc: string;
   icon: ComponentType<{ className?: string }>;
 }[] = [
-  { id: "default", name: "简洁", desc: "当前默认主题", icon: Palette },
-  { id: "fluid", name: "液态玻璃", desc: "流体光斑 · 玻璃质感", icon: Droplets },
+  { id: "default", name: "简洁", desc: "经典极简 · 高对比", icon: Palette },
+  { id: "fluid", name: "液态玻璃", desc: "当前默认主题", icon: Droplets },
 ];
 
 const MODE_OPTIONS: {
@@ -33,53 +35,31 @@ const MODE_OPTIONS: {
   { id: "system", name: "跟随系统", icon: Monitor },
 ];
 
-/** 根据 mode 获取实际生效的明暗模式 */
-function getEffectiveMode(mode: PaletteMode): "dark" | "light" {
-  if (mode === "system") {
-    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-  }
-  return mode;
-}
-
-/** 将 明暗模式 × 视觉风格 应用到 DOM + theme-color */
-function applyTheme(mode: PaletteMode, style: ThemeStyle) {
-  const effective = getEffectiveMode(mode);
-  document.documentElement.setAttribute("data-theme", effective);
-  document.documentElement.setAttribute("data-style", style);
-  const themeColor =
-    style === "fluid"
-      ? effective === "light"
-        ? "#f6f4fb"
-        : "#0d0b1a"
-      : effective === "light"
-        ? "#ffffff"
-        : "#0a0a0f";
-  const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute("content", themeColor);
-}
-
 export function ThemeToggle() {
+  const { settings } = useSiteSettings();
   const [mode, setMode] = useState<PaletteMode>(() => {
-    return (localStorage.getItem("theme") as PaletteMode) || "dark";
+    try { return normalizeSiteThemeMode(localStorage.getItem("theme") || settings.site_theme_mode); }
+    catch { return normalizeSiteThemeMode(settings.site_theme_mode); }
   });
   const [style, setStyle] = useState<ThemeStyle>(() => {
-    return (localStorage.getItem(STYLE_KEY) as ThemeStyle) || "default";
+    try { return normalizeSiteThemeStyle(localStorage.getItem(STYLE_KEY) || settings.site_theme_style); }
+    catch { return normalizeSiteThemeStyle(settings.site_theme_style); }
   });
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
   // 应用主题（模式或风格变化时）
   useEffect(() => {
-    applyTheme(mode, style);
-    localStorage.setItem("theme", mode);
-    localStorage.setItem(STYLE_KEY, style);
+    applySiteTheme(mode, style);
+    // LOCAL MOD: visitor override uses upstream renderer/cookie, not a parallel theme engine.
+    try { localStorage.setItem("theme", mode); localStorage.setItem(STYLE_KEY, style); } catch { /* blocked storage */ }
   }, [mode, style]);
 
   // system 模式下监听系统明暗变化
   useEffect(() => {
     const mql = window.matchMedia("(prefers-color-scheme: dark)");
     const handler = () => {
-      if (mode === "system") applyTheme("system", style);
+      if (mode === "system") applySiteTheme("system", style);
     };
     mql.addEventListener("change", handler);
     return () => mql.removeEventListener("change", handler);

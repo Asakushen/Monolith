@@ -232,7 +232,7 @@ export function AdminComments() {
                   {replyingTo === comment.id && (
                     <div className="mb-[8px] flex gap-[6px]">
                       <textarea value={replyContent} onChange={(e) => setReplyContent(e.target.value)} placeholder="以博主身份回复（直接公开）" aria-label="回复内容" maxLength={2000} className="min-h-[72px] flex-1 rounded-md border border-border/30 bg-background/50 px-[10px] py-[8px] text-[13px]" />
-                      <button onClick={() => handleReply(comment)} disabled={!replyContent.trim() || processing === comment.id} className="min-h-[36px] self-end rounded-md bg-foreground px-[10px] py-[7px] text-[12px] text-background disabled:opacity-40">发送</button>
+                      <button onClick={() => handleReply(comment)} disabled={!replyContent.trim() || processing === comment.id} className="min-h-[44px] self-end rounded-md bg-foreground px-[10px] py-[7px] text-[12px] text-background disabled:opacity-40 sm:min-h-[36px]">发送</button>
                     </div>
                   )}
                   {/* 底部：文章链接 + 时间 */}
@@ -252,7 +252,7 @@ export function AdminComments() {
                 {/* 操作按钮：触屏常驻；仅在支持 hover 的指针上隐藏到悬停/聚焦时 */}
                 <div className="flex items-center gap-[4px] shrink-0 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100">
                   {comment.approved && (
-                    <button onClick={() => { setReplyingTo(replyingTo === comment.id ? null : comment.id); setReplyContent(""); }} title="回复" aria-label="回复" className="inline-flex h-[36px] w-[36px] items-center justify-center rounded-md text-muted-foreground/30 hover:text-foreground">
+                    <button onClick={() => { setReplyingTo(replyingTo === comment.id ? null : comment.id); setReplyContent(""); }} title="回复" aria-label="回复" className="inline-flex h-[44px] w-[44px] items-center justify-center rounded-md text-muted-foreground/30 hover:text-foreground sm:h-[36px] sm:w-[36px]">
                       <Reply className="h-[14px] w-[14px]" />
                     </button>
                   )}
@@ -262,7 +262,7 @@ export function AdminComments() {
                       disabled={processing === comment.id}
                       title="通过审核"
                       aria-label="通过审核"
-                      className="inline-flex h-[36px] w-[36px] items-center justify-center rounded-md text-muted-foreground/30 hover:text-emerald-400 hover:bg-emerald-400/8 transition-colors disabled:opacity-30"
+                      className="inline-flex h-[44px] w-[44px] items-center justify-center rounded-md text-muted-foreground/30 hover:text-emerald-400 hover:bg-emerald-400/8 transition-colors disabled:opacity-30 sm:h-[36px] sm:w-[36px]"
                     >
                       <Check className={`h-[14px] w-[14px] ${processing === comment.id ? "animate-pulse" : ""}`} />
                     </button>
@@ -272,7 +272,7 @@ export function AdminComments() {
                     disabled={processing === comment.id}
                     title="删除"
                     aria-label="删除"
-                    className="inline-flex h-[36px] w-[36px] items-center justify-center rounded-md text-muted-foreground/30 hover:text-red-400 hover:bg-red-400/8 transition-colors disabled:opacity-30"
+                    className="inline-flex h-[44px] w-[44px] items-center justify-center rounded-md text-muted-foreground/30 hover:text-red-400 hover:bg-red-400/8 transition-colors disabled:opacity-30 sm:h-[36px] sm:w-[36px]"
                   >
                     <Trash2 className={`h-[13px] w-[13px] ${processing === comment.id ? "animate-pulse" : ""}`} />
                   </button>
